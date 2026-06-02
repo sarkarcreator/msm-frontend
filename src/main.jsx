@@ -482,7 +482,7 @@ function Inventory({ rows, brand, refresh }) {
   async function submit(event) {
     event.preventDefault();
     const product = await saveRecord('products', calculatedProduct(editing));
-    await saveRemoteRecord('products', product);
+    runInBackground(() => saveRemoteRecord('products', product), 'Inventory synced in background');
     setEditing(null);
     await refresh();
     notify('Product saved successfully');
@@ -560,7 +560,13 @@ function notify(message) {
 
 async function deleteEverywhere(store, row, mode) {
   await deleteRecord(store, row.uuid, mode);
-  await deleteRemoteRecord(store, row.uuid, mode);
+  runInBackground(() => deleteRemoteRecord(store, row.uuid, mode), 'Delete synced in background');
+}
+
+function runInBackground(task, successMessage) {
+  task()
+    .then(() => successMessage && notify(successMessage))
+    .catch((error) => notify(error.message || 'Background sync failed. It will retry later.'));
 }
 
 function POS2({ data, brand, refresh }) {
