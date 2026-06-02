@@ -13,7 +13,7 @@ export const STORE_NAMES = [
 
 const MONEY_FIELDS = new Set([
   'purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price',
-  'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'charges', 'subtotal',
+  'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'subtotal',
   'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit',
   'repair_charges', 'advance_payment', 'remaining_amount',
 ]);

@@ -152,6 +152,7 @@ const RESOURCES = {
     search: ['patient_name', 'phone', 'cnic', 'doctor_name', 'diagnosis', 'status'],
     columns: ['patient_name', 'phone', 'age', 'gender', 'doctor_name', 'fee', 'status', 'visit_date'],
     fields: [['patient_name', 'Patient Name', 'text', true], ['phone', 'Phone'], ['age', 'Age', 'number'], ['gender', 'Gender', 'select', false, ['Male', 'Female', 'Other']], ['cnic', 'CNIC'], ['doctor_name', 'Doctor Name', 'text', true], ['assistant_name', 'Assistant / Compounder'], ['symptoms', 'Symptoms'], ['diagnosis', 'Diagnosis'], ['medicine', 'Medicine / Prescription'], ['fee', 'Fee', 'number'], ['status', 'Status', 'select', true, ['Waiting', 'Checked', 'Admitted', 'Discharged']], ['visit_date', 'Visit Date', 'date'], ['next_visit', 'Next Visit', 'date'], ['notes', 'Notes']],
+    defaultRecord: ({ auth, brand }) => ({ status: 'Waiting', visit_date: new Date().toISOString().slice(0, 10), doctor_name: currentDoctorName(auth, brand) }),
   },
   assistants: {
     title: 'Assistant Management',
@@ -159,6 +160,7 @@ const RESOURCES = {
     search: ['name', 'phone', 'role', 'doctor_name', 'status'],
     columns: ['name', 'phone', 'role', 'doctor_name', 'shift', 'status'],
     fields: [['name', 'Assistant Name', 'text', true], ['phone', 'Phone'], ['role', 'Role', 'select', true, ['Compounder', 'Assistant', 'Receptionist', 'Nurse']], ['doctor_name', 'Doctor Name'], ['shift', 'Shift', 'select', false, ['Morning', 'Evening', 'Night', 'Full Day']], ['salary', 'Salary', 'number'], ['status', 'Status', 'select', true, ['Active', 'Disabled']], ['notes', 'Notes']],
+    defaultRecord: ({ auth, brand }) => ({ status: 'Active', role: 'Compounder', doctor_name: currentDoctorName(auth, brand) }),
   },
   settings: {
     title: 'Admin Panel Settings',
@@ -356,7 +358,7 @@ function App() {
           </div>
         </header>
         <div className="content">
-          {active === 'dashboard' && <Dashboard snapshot={snapshot} data={data} />}
+          {active === 'dashboard' && <Dashboard snapshot={snapshot} data={data} brand={brand} auth={auth} />}
           {active === 'pos' && <POS2 data={data} brand={brand} refresh={refresh} />}
           {active === 'sales' && <Sales rows={data.sales || []} brand={brand} refresh={refresh} />}
           {active === 'products' && <Inventory rows={data.products || []} brand={brand} refresh={refresh} />}
@@ -372,8 +374,8 @@ function App() {
           {active === 'accounting' && <Accounting data={data} refresh={refresh} />}
           {active === 'reports' && <Reports refreshKey={refreshKey} />}
           {active === 'users' && <CrudModule config={RESOURCES.users} rows={data.users || []} refresh={refresh} />}
-          {active === 'patients' && <CrudModule config={RESOURCES.patients} rows={data.patients || []} refresh={refresh} />}
-          {active === 'assistants' && <CrudModule config={RESOURCES.assistants} rows={data.assistants || []} refresh={refresh} />}
+          {active === 'patients' && <CrudModule config={RESOURCES.patients} rows={patientRowsForUser(data.patients || [], auth, brand)} refresh={refresh} context={{ auth, brand }} />}
+          {active === 'assistants' && <CrudModule config={RESOURCES.assistants} rows={assistantRowsForUser(data.assistants || [], auth, brand)} refresh={refresh} context={{ auth, brand }} />}
           {active === 'licenses' && <LicenseManager rows={data.licenses || []} refresh={refresh} />}
           {active === 'settings' && <SettingsPanel brand={brand} rows={data.settings || []} refresh={refresh} />}
         </div>
@@ -450,7 +452,8 @@ function inventoryRows(rows) {
   });
 }
 
-function Dashboard({ snapshot, data }) {
+function Dashboard({ snapshot, data, brand, auth }) {
+  if (brand?.business_type === 'Hospital') return <HospitalDashboard data={data} auth={auth} brand={brand} />;
   const cards = [
     ['Today Orders', snapshot?.todayOrders, false], ['Today Repairs', snapshot?.todayRepairs, false], ['Monthly Profit', snapshot?.monthlyProfit],
     ['Best Selling Product', snapshot?.bestSellingProduct, 'text'], ['Repair Revenue', snapshot?.repairRevenue], ['Pending Repairs', snapshot?.pendingRepairs, false],
@@ -463,6 +466,55 @@ function Dashboard({ snapshot, data }) {
   const pendingRepairs = [...(data.repairs || []), ...(data.manual_repair_receipts || [])].filter((row) => !['Delivered', 'Completed'].includes(row.status));
   const max = Math.max(...sales.slice(0, 8).map((sale) => Number(sale.total)), 1);
   return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? (value || 'No Data Available') : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><section className="panel"><div className="module-head"><h2>Sales Performance</h2><span className="shortcut-pill"><BarChart3 size={15} /> Last {Math.min(sales.length, 8)} invoices</span></div>{sales.length ? <SalesChart sales={sales} max={max} /> : <DashboardEmpty icon={BarChart3} title="No Sales Data Available" description="Start creating sales to see analytics." />}</section><section className="split"><DashboardTable title="Top Customers" rows={snapshot?.topCustomers || []} cols={['name', 'phone', 'total_spent', 'balance']} emptyIcon={Users} emptyTitle={customers.length ? 'No Spending History Available' : 'No Customer Data Available'} emptyDescription={customers.length ? 'Customer spend totals will appear after sales are recorded.' : 'Create customers or complete sales to build this leaderboard.'} /><DashboardTable title="Low Stock Alerts" rows={snapshot?.lowStock || []} cols={['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={products.length ? 'All Stock Levels Healthy' : 'No Inventory Data Available'} emptyDescription={products.length ? 'Products below their low stock threshold will appear here.' : 'Add inventory or receive stock from Purchases to enable alerts.'} /></section><section className="split"><DashboardTable title="Recent Sales" rows={snapshot?.recentSales || []} cols={['invoice_number', 'customer_name', 'total', 'paid', 'balance']} emptyIcon={ReceiptText} emptyTitle="No Recent Sales Available" emptyDescription="Completed invoices will appear here automatically." /><DashboardTable title="Pending Repairs" rows={pendingRepairs} cols={['job_number', 'receipt_number', 'customer_name', 'device_name', 'status']} emptyIcon={Wrench} emptyTitle="No Pending Repairs" emptyDescription="Open repair jobs and manual repair receipts will appear here." /></section></div>;
+}
+
+function HospitalDashboard({ data, auth, brand }) {
+  const doctor = currentDoctorName(auth, brand);
+  const patients = patientRowsForUser(data.patients || [], auth, brand);
+  const assistants = assistantRowsForUser(data.assistants || [], auth, brand);
+  const today = new Date().toISOString().slice(0, 10);
+  const todayPatients = patients.filter((patient) => String(patient.visit_date || patient.created_at || '').startsWith(today));
+  const checkedPatients = patients.filter((patient) => ['Checked', 'Discharged'].includes(patient.status));
+  const waitingPatients = patients.filter((patient) => ['Waiting', 'Admitted'].includes(patient.status));
+  const followUps = patients.filter((patient) => patient.next_visit && String(patient.next_visit).slice(0, 10) >= today);
+  const feesToday = todayPatients.reduce((sum, patient) => sum + Number(patient.fee || 0), 0);
+  const medicines = patients
+    .filter((patient) => patient.medicine)
+    .slice(0, 8)
+    .map((patient) => ({ uuid: patient.uuid, patient_name: patient.patient_name, medicine: patient.medicine, diagnosis: patient.diagnosis, visit_date: patient.visit_date }));
+  const cards = [
+    ['Doctor', doctor || 'No Doctor', 'text'],
+    ['Patients Today', todayPatients.length, false],
+    ['Total Patients', patients.length, false],
+    ['Checked Patients', checkedPatients.length, false],
+    ['Waiting / Admitted', waitingPatients.length, false],
+    ['Follow Ups', followUps.length, false],
+    ['Today Fees', feesToday, true],
+    ['Active Assistants', assistants.filter((item) => item.status !== 'Disabled').length, false],
+  ];
+  return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? value : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><section className="split"><DashboardTable title="Today's Patients" rows={todayPatients} cols={['patient_name', 'phone', 'age', 'diagnosis', 'medicine', 'status', 'visit_date']} emptyIcon={Users} emptyTitle="No Patients Today" emptyDescription="Patients checked today will appear here." /><DashboardTable title="Follow Up Patients" rows={followUps} cols={['patient_name', 'phone', 'diagnosis', 'medicine', 'next_visit', 'status']} emptyIcon={Bell} emptyTitle="No Follow Ups" emptyDescription="Upcoming follow-up patients will appear here." /></section><section className="split"><DashboardTable title="Medicine / Prescription History" rows={medicines} cols={['patient_name', 'medicine', 'diagnosis', 'visit_date']} emptyIcon={FileText} emptyTitle="No Medicine History" emptyDescription="Medicine prescribed to patients will appear here." /><DashboardTable title="Doctor Assistants" rows={assistants} cols={['name', 'phone', 'role', 'doctor_name', 'shift', 'status']} emptyIcon={Users} emptyTitle="No Assistants Added" emptyDescription="Add compounders or assistants for this doctor." /></section></div>;
+}
+
+function currentDoctorName(auth, brand) {
+  const name = auth?.user || '';
+  if (name && !['Admin', 'Manager', 'Cashier'].includes(name)) return name;
+  return brand?.owner_name || brand?.shop_name || name;
+}
+
+function patientRowsForUser(rows, auth, brand) {
+  if (brand?.business_type !== 'Hospital') return rows;
+  const doctor = currentDoctorName(auth, brand).toLowerCase();
+  if (!doctor || auth?.role === 'Super Admin') return rows;
+  const scoped = rows.filter((patient) => String(patient.doctor_name || '').toLowerCase() === doctor);
+  return scoped.length ? scoped : rows;
+}
+
+function assistantRowsForUser(rows, auth, brand) {
+  if (brand?.business_type !== 'Hospital') return rows;
+  const doctor = currentDoctorName(auth, brand).toLowerCase();
+  if (!doctor || auth?.role === 'Super Admin') return rows;
+  const scoped = rows.filter((assistant) => String(assistant.doctor_name || '').toLowerCase() === doctor);
+  return scoped.length ? scoped : rows;
 }
 
 function SalesChart({ sales, max }) {
@@ -478,13 +530,13 @@ function DashboardEmpty({ icon: Icon, title, description }) {
   return <div className="dashboard-empty"><Icon size={30} /><strong>{title}</strong><p>{description}</p></div>;
 }
 
-function CrudModule({ config, rows, refresh, extraActions }) {
+function CrudModule({ config, rows, refresh, extraActions, context = {} }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [viewing, setViewing] = useState(null);
   const importRef = useRef(null);
-  const blankRecord = () => DEFAULT_RECORDS[config.title]?.() || {};
+  const blankRecord = () => config.defaultRecord?.(context) || DEFAULT_RECORDS[config.title]?.() || {};
   const displayRows = useMemo(() => config.rowMap ? config.rowMap(rows) : rows, [rows, config]);
   const filtered = useMemo(() => filterRows(displayRows, query, config.search), [displayRows, query, config.search]);
   async function submit(record) {
@@ -1011,6 +1063,7 @@ function format(value, key) {
   if (key === 'status') return <span className={`status-tag ${statusClass(value)}`}>{String(value ?? '')}</span>;
   if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent'].includes(key)) return money(value);
   if (String(key).includes('_at') && value) return new Date(value).toLocaleString();
+  if (['visit_date', 'next_visit', 'delivery_date', 'expiry_date', 'due_date'].includes(key) && value) return new Date(value).toLocaleDateString();
   return String(value ?? '');
 }
 
@@ -1033,6 +1086,7 @@ function printTable(title, rows, columns) {
 function printableFormat(value, key) {
   if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent'].includes(key)) return money(value);
   if (String(key).includes('_at') && value) return new Date(value).toLocaleString();
+  if (['visit_date', 'next_visit', 'delivery_date', 'expiry_date', 'due_date'].includes(key) && value) return new Date(value).toLocaleDateString();
   return String(value ?? '');
 }
 
