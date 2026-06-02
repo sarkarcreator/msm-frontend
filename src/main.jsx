@@ -677,17 +677,21 @@ function LicenseManager({ rows, refresh }) {
   const filtered = useMemo(() => filterRows(rows, query, ['license_key', 'activation_code', 'owner_name', 'device_id', 'type', 'status', 'expiry_date']), [rows, query]);
   async function submit(e) {
     e.preventDefault();
-    if (form.uuid) {
-      await saveRecord('licenses', form);
-      await saveRemoteRecord('licenses', form);
-    } else {
-      const license = await generateLicense(form);
-      await saveRemoteRecord('licenses', license, { forceCreate: true });
+    try {
+      if (form.uuid) {
+        await saveRecord('licenses', form);
+        await saveRemoteRecord('licenses', form);
+      } else {
+        const license = await generateLicense(form);
+        await saveRemoteRecord('licenses', license, { forceCreate: true });
+      }
+      setForm(newLicenseForm());
+      setCreating(false);
+      await refresh();
+      notify('License saved successfully');
+    } catch (error) {
+      notify(error.message || 'License save failed');
     }
-    setForm(newLicenseForm());
-    setCreating(false);
-    await refresh();
-    notify('License saved successfully');
   }
   async function remove(row, mode) {
     await deleteRecord('licenses', row.uuid, mode);
