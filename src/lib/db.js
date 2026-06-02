@@ -115,6 +115,31 @@ export async function saveRecord(store, data, action = data.uuid ? 'update' : 'c
   return clean;
 }
 
+export async function saveRemoteRecord(resource, data) {
+  const token = localStorage.getItem('dsh_token') || '';
+  const uuid = data.uuid;
+  const response = await fetch(`${API_URL}/${resource}${uuid ? `/${uuid}` : ''}`, {
+    method: uuid ? 'PUT' : 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Remote save failed.';
+    throw new Error(detail);
+  }
+  return payload;
+}
+
+export async function saveUserAccount(record) {
+  const remote = await saveRemoteRecord('users', record);
+  return saveRecord('users', { ...record, ...remote, role: record.role, status: record.status || 'Active' });
+}
+
 export async function deleteRecord(store, uuid, mode = 'soft') {
   const db = await database();
   const current = await db.get(store, uuid);
