@@ -140,6 +140,20 @@ export async function saveUserAccount(record) {
   return saveRecord('users', { ...record, ...remote, role: record.role, status: record.status || 'Active' });
 }
 
+export async function activateLicenseAccount(record) {
+  const response = await fetch(`${API_URL}/license/activate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ ...record, device_id: record.device_id || ensureDeviceId() }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'License activation failed.';
+    throw new Error(detail);
+  }
+  return payload;
+}
+
 export async function deleteRecord(store, uuid, mode = 'soft') {
   const db = await database();
   const current = await db.get(store, uuid);

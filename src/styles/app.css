@@ -146,6 +146,9 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .login-brand strong { @apply block text-lg font-black; }
 .login-brand small { @apply text-sm text-black/55 dark:text-white/55; }
 .login-form { @apply grid gap-4; }
+.login-tabs { @apply mb-4 grid grid-cols-2 gap-2 rounded-2xl bg-paper p-1 dark:bg-black/20; }
+.login-tabs button { @apply h-10 rounded-xl text-sm font-black text-black/55 transition dark:text-white/55; }
+.login-tabs button.active { @apply bg-mint text-white shadow; }
 .login-form label { @apply grid gap-1 text-sm font-bold text-black/60 dark:text-white/60; }
 .login-form input { @apply h-11 rounded-2xl border border-black/10 bg-white px-3 text-ink outline-none focus:border-mint dark:border-white/10 dark:bg-black/20 dark:text-white; }
 .login-form .primary-btn { @apply mt-2 w-full justify-center; }

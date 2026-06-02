@@ -10,10 +10,11 @@ import {
 import {
   API_URL,
   activeLicenseStatus, addExpense, createPurchase, createSale, dashboardSnapshot,
+  activateLicenseAccount,
   cleanupStartupData, deleteRecord, downloadPdf, ensureDeviceId, exportCsv, generateLicense,
   getBrandSettings, importCsvRecords, listRecords, notificationCenter,
   printHtml, quickCustomer, receiptQrData, receiveCustomerPayment,
-  reportData, saveBrandSettings, saveRecord, saveUserAccount, syncNow, updateRepairStatus,
+  reportData, saveBrandSettings, saveRecord, saveRemoteRecord, saveUserAccount, syncNow, updateRepairStatus,
   whatsAppShare, createManualRepairReceipt,
 } from './lib/db.js';
 import './styles/app.css';
@@ -290,7 +291,9 @@ function App() {
 }
 
 function LoginScreen({ brand, onLogin }) {
+  const [mode, setMode] = useState('login');
   const [form, setForm] = useState({ email: 'admin@dsh.local', password: '' });
+  const [activation, setActivation] = useState({ license_key: '', activation_code: '', shop_name: '', name: '', email: '', password: '', device_id: ensureDeviceId() });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -314,7 +317,21 @@ function LoginScreen({ brand, onLogin }) {
     }
   }
 
-  return <main className="login-page"><section className="login-panel"><div className="login-brand"><span>{initials(brand?.shop_name || brand?.company_name || 'MS')}</span><div><strong>{brand?.software_name || 'Mobile Shop Management System'}</strong><small>{brand?.company_name || 'Secure admin login'}</small></div></div><form onSubmit={submit} className="login-form"><label>Email<input type="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label><label>Password<input type="password" required value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>{error && <p className="login-error">{error}</p>}<button className="primary-btn" disabled={loading}>{loading ? 'Signing in...' : 'Login'}</button></form></section></main>;
+  async function activate(event) {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const payload = await activateLicenseAccount(activation);
+      onLogin(payload);
+    } catch (err) {
+      setError(err.message || 'License activation failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return <main className="login-page"><section className="login-panel"><div className="login-brand"><span>{initials(brand?.shop_name || brand?.company_name || 'MS')}</span><div><strong>{brand?.software_name || 'Mobile Shop Management System'}</strong><small>{mode === 'login' ? 'Secure admin login' : 'Activate shop license'}</small></div></div><div className="login-tabs"><button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError(''); }}>Login</button><button type="button" className={mode === 'activate' ? 'active' : ''} onClick={() => { setMode('activate'); setError(''); }}>Activate License</button></div>{mode === 'login' ? <form onSubmit={submit} className="login-form"><label>Email<input type="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label><label>Password<input type="password" required value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>{error && <p className="login-error">{error}</p>}<button className="primary-btn" disabled={loading}>{loading ? 'Signing in...' : 'Login'}</button></form> : <form onSubmit={activate} className="login-form"><label>License Key<input required value={activation.license_key} onChange={(event) => setActivation({ ...activation, license_key: event.target.value })} /></label><label>Activation Code<input required value={activation.activation_code} onChange={(event) => setActivation({ ...activation, activation_code: event.target.value })} /></label><label>Shop Name<input required value={activation.shop_name} onChange={(event) => setActivation({ ...activation, shop_name: event.target.value })} /></label><label>Admin Name<input required value={activation.name} onChange={(event) => setActivation({ ...activation, name: event.target.value })} /></label><label>Admin Email<input type="email" required value={activation.email} onChange={(event) => setActivation({ ...activation, email: event.target.value })} /></label><label>Password<input type="password" required minLength={6} value={activation.password} onChange={(event) => setActivation({ ...activation, password: event.target.value })} /></label><label>Device Binding<input value={activation.device_id} onChange={(event) => setActivation({ ...activation, device_id: event.target.value })} /></label>{error && <p className="login-error">{error}</p>}<button className="primary-btn" disabled={loading}>{loading ? 'Activating...' : 'Activate & Login'}</button></form>}</section></main>;
 }
 
 function NavButton({ item, active, onClick }) {
@@ -660,8 +677,13 @@ function LicenseManager({ rows, refresh }) {
   const filtered = useMemo(() => filterRows(rows, query, ['license_key', 'activation_code', 'owner_name', 'device_id', 'type', 'status', 'expiry_date']), [rows, query]);
   async function submit(e) {
     e.preventDefault();
-    if (form.uuid) await saveRecord('licenses', form);
-    else await generateLicense(form);
+    if (form.uuid) {
+      await saveRecord('licenses', form);
+      await saveRemoteRecord('licenses', form);
+    } else {
+      const license = await generateLicense(form);
+      await saveRemoteRecord('licenses', license);
+    }
     setForm(newLicenseForm());
     setCreating(false);
     await refresh();
