@@ -11,7 +11,7 @@ import {
   API_URL,
   activeLicenseStatus, addExpense, createPurchase, createSale, dashboardSnapshot,
   activateLicenseAccount,
-  cleanupStartupData, deleteRecord, downloadPdf, ensureDeviceId, exportCsv, generateLicense,
+  cleanupStartupData, deleteRecord, deleteRemoteRecord, downloadPdf, ensureDeviceId, exportCsv, generateLicense,
   getBrandSettings, importCsvRecords, listRecords, notificationCenter,
   printHtml, quickCustomer, receiptQrData, receiveCustomerPayment,
   reportData, saveBrandSettings, saveRecord, saveRemoteRecord, saveUserAccount, syncNow, updateRepairStatus,
@@ -58,6 +58,21 @@ function modulesForBusiness(modules, brand) {
   const type = brand?.business_type || 'General Store';
   if (REPAIR_SHOP_TYPES.has(type)) return modules;
   return modules.filter((item) => !['repairs', 'repairReceipts'].includes(item.id));
+}
+
+function categoriesForBusiness(brand) {
+  const type = brand?.business_type || 'General Store';
+  const groups = {
+    'Mobile Shop': ['Mobile Phones', 'Accessories', 'Spare Parts', 'Electronics'],
+    'Electronics Store': ['Electronics', 'Accessories', 'Spare Parts'],
+    'Pharmacy': ['Medicine', 'Healthcare', 'Personal Care', 'Baby Care'],
+    'Grocery Store': ['Grocery', 'General', 'Household', 'Beverages'],
+    'General Store': ['General', 'Grocery', 'Household', 'Beverages'],
+    'Shopping Mall': ['General', 'Grocery', 'Electronics', 'Clothing', 'Household'],
+    'Clothing Store': ['Clothing', 'Footwear', 'Accessories'],
+    'Hardware Store': ['Hardware', 'Tools', 'Electrical', 'Plumbing'],
+  };
+  return groups[type] || groups['General Store'];
 }
 
 const RESOURCES = {
@@ -287,7 +302,7 @@ function App() {
           {active === 'dashboard' && <Dashboard snapshot={snapshot} data={data} />}
           {active === 'pos' && <POS2 data={data} brand={brand} refresh={refresh} />}
           {active === 'sales' && <Sales rows={data.sales || []} brand={brand} refresh={refresh} />}
-          {active === 'products' && <Inventory rows={data.products || []} refresh={refresh} />}
+          {active === 'products' && <Inventory rows={data.products || []} brand={brand} refresh={refresh} />}
           {active === 'customers' && <CrudModule config={RESOURCES.customers} rows={data.customers || []} refresh={refresh} extraActions={(row) => <button className="ghost-btn" onClick={() => printLedger(row, data.customer_ledgers || [])}><Printer size={15} /> Ledger</button>} />}
           {active === 'credit' && <Credit data={data} refresh={refresh} />}
           {active === 'repairs' && <Repairs rows={data.repairs || []} refresh={refresh} />}
@@ -296,7 +311,7 @@ function App() {
           {active === 'suppliers' && <CrudModule config={RESOURCES.suppliers} rows={data.suppliers || []} refresh={refresh} extraActions={(row) => <button className="ghost-btn" onClick={() => printLedger(row, data.supplier_ledgers || [], 'supplier_uuid')}><Printer size={15} /> Ledger</button>} />}
           {active === 'expenses' && <CrudModule config={RESOURCES.expenses} rows={data.expenses || []} refresh={refresh} />}
           {active === 'notifications' && <Notifications data={data} refresh={refresh} />}
-          {active === 'accounting' && <Accounting data={data} />}
+          {active === 'accounting' && <Accounting data={data} refresh={refresh} />}
           {active === 'reports' && <Reports refreshKey={refreshKey} />}
           {active === 'users' && <CrudModule config={RESOURCES.users} rows={data.users || []} refresh={refresh} />}
           {active === 'licenses' && <LicenseManager rows={data.licenses || []} refresh={refresh} />}
@@ -387,7 +402,12 @@ function Dashboard({ snapshot, data }) {
   const products = data.products || [];
   const pendingRepairs = [...(data.repairs || []), ...(data.manual_repair_receipts || [])].filter((row) => !['Delivered', 'Completed'].includes(row.status));
   const max = Math.max(...sales.slice(0, 8).map((sale) => Number(sale.total)), 1);
-  return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? (value || 'No Data Available') : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><section className="panel"><h2>Sales Chart</h2>{sales.length ? <div className="chart">{sales.slice(0, 8).map((sale) => <div key={sale.uuid} style={{ height: `${Math.max(8, (Number(sale.total) / max) * 100)}%` }} title={`${sale.invoice_number} - ${money(sale.total)}`} />)}</div> : <DashboardEmpty icon={BarChart3} title="No Sales Data Available" description="Start creating sales to see analytics." />}</section><section className="split"><DashboardTable title="Top Customers" rows={snapshot?.topCustomers || []} cols={['name', 'phone', 'total_spent', 'balance']} emptyIcon={Users} emptyTitle={customers.length ? 'No Spending History Available' : 'No Customer Data Available'} emptyDescription={customers.length ? 'Customer spend totals will appear after sales are recorded.' : 'Create customers or complete sales to build this leaderboard.'} /><DashboardTable title="Low Stock Alerts" rows={snapshot?.lowStock || []} cols={['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={products.length ? 'All Stock Levels Healthy' : 'No Inventory Data Available'} emptyDescription={products.length ? 'Products below their low stock threshold will appear here.' : 'Add inventory or receive stock from Purchases to enable alerts.'} /></section><section className="split"><DashboardTable title="Recent Sales" rows={snapshot?.recentSales || []} cols={['invoice_number', 'customer_name', 'total', 'paid', 'balance']} emptyIcon={ReceiptText} emptyTitle="No Recent Sales Available" emptyDescription="Completed invoices will appear here automatically." /><DashboardTable title="Pending Repairs" rows={pendingRepairs} cols={['job_number', 'receipt_number', 'customer_name', 'device_name', 'status']} emptyIcon={Wrench} emptyTitle="No Pending Repairs" emptyDescription="Open repair jobs and manual repair receipts will appear here." /></section></div>;
+  return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? (value || 'No Data Available') : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><section className="panel"><div className="module-head"><h2>Sales Performance</h2><span className="shortcut-pill"><BarChart3 size={15} /> Last {Math.min(sales.length, 8)} invoices</span></div>{sales.length ? <SalesChart sales={sales} max={max} /> : <DashboardEmpty icon={BarChart3} title="No Sales Data Available" description="Start creating sales to see analytics." />}</section><section className="split"><DashboardTable title="Top Customers" rows={snapshot?.topCustomers || []} cols={['name', 'phone', 'total_spent', 'balance']} emptyIcon={Users} emptyTitle={customers.length ? 'No Spending History Available' : 'No Customer Data Available'} emptyDescription={customers.length ? 'Customer spend totals will appear after sales are recorded.' : 'Create customers or complete sales to build this leaderboard.'} /><DashboardTable title="Low Stock Alerts" rows={snapshot?.lowStock || []} cols={['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={products.length ? 'All Stock Levels Healthy' : 'No Inventory Data Available'} emptyDescription={products.length ? 'Products below their low stock threshold will appear here.' : 'Add inventory or receive stock from Purchases to enable alerts.'} /></section><section className="split"><DashboardTable title="Recent Sales" rows={snapshot?.recentSales || []} cols={['invoice_number', 'customer_name', 'total', 'paid', 'balance']} emptyIcon={ReceiptText} emptyTitle="No Recent Sales Available" emptyDescription="Completed invoices will appear here automatically." /><DashboardTable title="Pending Repairs" rows={pendingRepairs} cols={['job_number', 'receipt_number', 'customer_name', 'device_name', 'status']} emptyIcon={Wrench} emptyTitle="No Pending Repairs" emptyDescription="Open repair jobs and manual repair receipts will appear here." /></section></div>;
+}
+
+function SalesChart({ sales, max }) {
+  const chartRows = sales.slice(0, 8).reverse();
+  return <div className="chart-card"><div className="chart-grid-lines"><span /><span /><span /></div><div className="chart">{chartRows.map((sale, index) => { const height = Math.max(12, (Number(sale.total || 0) / max) * 100); return <div className="chart-column" key={sale.uuid} style={{ '--bar-height': `${height}%`, '--bar-delay': `${index * 45}ms` }} title={`${sale.invoice_number} - ${money(sale.total)}`}><strong>{money(sale.total)}</strong><span className="chart-bar" /><small>{sale.invoice_number || `Sale ${index + 1}`}</small></div>; })}</div></div>;
 }
 
 function DashboardTable({ title, rows, cols, emptyIcon, emptyTitle, emptyDescription }) {
@@ -415,7 +435,7 @@ function CrudModule({ config, rows, refresh, extraActions }) {
     notify('Record saved successfully');
   }
   async function remove(row, mode) {
-    await deleteRecord(config.store, row.uuid, mode);
+    await deleteEverywhere(config.store, row, mode);
     setDeleting(null);
     await refresh();
     notify('Record deleted successfully');
@@ -431,14 +451,16 @@ function CrudModule({ config, rows, refresh, extraActions }) {
   return <div className="stack"><section className="panel"><ModuleHeader title={config.title} query={query} setQuery={setQuery} onAdd={() => setEditing(blankRecord())} onImport={() => importRef.current?.click()} onExport={() => exportCsv(`${config.store}.csv`, filtered)} onPrint={() => printTable(config.title, filtered, config.columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={config.columns} onAdd={() => setEditing(blankRecord())} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button>{extraActions?.(row)}</>} /></section>{viewing && <DetailModal title={`${config.title} Detail`} row={viewing} columns={config.columns} onClose={() => setViewing(null)} />}{editing && <RecordModal title={config.title} fields={config.fields} record={editing} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store={config.store} onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
-function Inventory({ rows, refresh }) {
+function Inventory({ rows, brand, refresh }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  const [viewing, setViewing] = useState(null);
   const importRef = useRef(null);
   const columns = RESOURCES.products.columns;
+  const categoryOptions = categoriesForBusiness(brand);
   const filtered = useMemo(() => filterRows(inventoryRows(rows), query, RESOURCES.products.search), [rows, query]);
-  const blank = { category: 'General', unit: 'pcs', quantity: 0, low_stock_threshold: 3, purchase_price: 0, sale_price: 0 };
+  const blank = { category: categoryOptions[0], unit: 'pcs', quantity: 0, low_stock_threshold: 3, purchase_price: 0, sale_price: 0 };
 
   async function submit(event) {
     event.preventDefault();
@@ -449,7 +471,7 @@ function Inventory({ rows, refresh }) {
   }
 
   async function remove(row, mode) {
-    await deleteRecord('products', row.uuid, mode);
+    await deleteEverywhere('products', row, mode);
     setDeleting(null);
     await refresh();
     notify('Product deleted successfully');
@@ -468,7 +490,7 @@ function Inventory({ rows, refresh }) {
     setEditing((current) => ({ ...current, [key]: value }));
   }
 
-  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => printTable('Product Detail', [row], columns)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={editing.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={editing.category || 'General'} onChange={(event) => change('category', event.target.value)}>{['General', 'Grocery', 'Pharmacy', 'Electronics', 'Clothing', 'Hardware', 'Accessories', 'Spare Parts'].map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={editing.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label><label>SKU<input value={editing.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Barcode<input value={editing.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Unit<select value={editing.unit || 'pcs'} onChange={(event) => change('unit', event.target.value)}>{['pcs', 'kg', 'gram', 'liter', 'meter', 'box', 'pack'].map((item) => <option key={item}>{item}</option>)}</select></label><label>Batch Number<input value={editing.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label><label>Expiry Date<input type="date" value={editing.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label><label>IMEI / Serial<input value={editing.imei || ''} onChange={(event) => change('imei', event.target.value)} /></label><label>Manufacturer<input value={editing.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label><label>Cost Price<input type="number" value={editing.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label><label>Sale Price<input type="number" value={editing.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Stock<input type="number" value={editing.quantity || 0} onChange={(event) => change('quantity', event.target.value)} /></label><label>Low Stock Warning<input type="number" value={editing.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label><label>Warranty<input value={editing.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label><label>Supplier<input value={editing.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Product Detail" row={viewing} columns={columns} onClose={() => setViewing(null)} />}{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={editing.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={editing.category || categoryOptions[0]} onChange={(event) => change('category', event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={editing.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label><label>SKU<input value={editing.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Barcode<input value={editing.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Unit<select value={editing.unit || 'pcs'} onChange={(event) => change('unit', event.target.value)}>{['pcs', 'kg', 'gram', 'liter', 'meter', 'box', 'pack'].map((item) => <option key={item}>{item}</option>)}</select></label><label>Batch Number<input value={editing.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label><label>Expiry Date<input type="date" value={editing.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label><label>IMEI / Serial<input value={editing.imei || ''} onChange={(event) => change('imei', event.target.value)} /></label><label>Manufacturer<input value={editing.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label><label>Cost Price<input type="number" value={editing.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label><label>Sale Price<input type="number" value={editing.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Stock<input type="number" value={editing.quantity || 0} onChange={(event) => change('quantity', event.target.value)} /></label><label>Low Stock Warning<input type="number" value={editing.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label><label>Warranty<input value={editing.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label><label>Supplier<input value={editing.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function DeleteDialog({ row, store, onClose, onDelete }) {
@@ -492,6 +514,11 @@ function ModalShell({ children, onClose, size = '' }) {
 
 function notify(message) {
   window.dispatchEvent(new CustomEvent('dsh:toast', { detail: message }));
+}
+
+async function deleteEverywhere(store, row, mode) {
+  await deleteRecord(store, row.uuid, mode);
+  await deleteRemoteRecord(store, row.uuid, mode);
 }
 
 function POS2({ data, brand, refresh }) {
@@ -556,7 +583,7 @@ function Credit({ data, refresh }) {
     notify('Payment received successfully');
   }
   async function removeLedger(row, mode) {
-    await deleteRecord('customer_ledgers', row.uuid, mode);
+    await deleteEverywhere('customer_ledgers', row, mode);
     setDeleting(null);
     await refresh();
     notify('Credit record deleted successfully');
@@ -568,6 +595,7 @@ function Sales({ rows, brand, refresh }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  const [viewing, setViewing] = useState(null);
   const filtered = useMemo(() => filterRows(rows, query, ['invoice_number', 'customer_name', 'payment_type', 'status']), [rows, query]);
   const fields = [['invoice_number', 'Invoice Number'], ['customer_name', 'Customer Name'], ['payment_type', 'Payment Type', 'select', true, ['cash', 'credit', 'partial']], ['subtotal', 'Subtotal', 'number'], ['discount', 'Discount', 'number'], ['tax', 'Tax', 'number'], ['total', 'Total', 'number', true], ['paid', 'Paid', 'number'], ['balance', 'Balance', 'number'], ['status', 'Status', 'select', true, ['Paid', 'Credit Due']]];
   async function submit(record) {
@@ -577,12 +605,12 @@ function Sales({ rows, brand, refresh }) {
     notify('Sale saved successfully');
   }
   async function remove(row, mode) {
-    await deleteRecord('sales', row.uuid, mode);
+    await deleteEverywhere('sales', row, mode);
     setDeleting(null);
     await refresh();
     notify('Sale deleted successfully');
   }
-  return <div className="stack"><section className="panel"><ModuleHeader title="Sales Records" query={query} setQuery={setQuery} onAdd={() => setEditing({ invoice_number: `MANUAL-${Date.now()}`, payment_type: 'cash', status: 'Paid' })} onExport={() => exportCsv('sales.csv', filtered)} onPrint={() => printTable('Sales Records', filtered, ['invoice_number', 'customer_name', 'total', 'paid', 'balance', 'status'])} /><DataTable rows={filtered} columns={['invoice_number', 'customer_name', 'payment_type', 'total', 'paid', 'balance', 'status', 'sold_at']} onAdd={() => setEditing({ invoice_number: `MANUAL-${Date.now()}`, payment_type: 'cash', status: 'Paid' })} actions={(row) => <><button className="ghost-btn" onClick={() => printTable('Sale Detail', [row], ['invoice_number', 'customer_name', 'payment_type', 'total', 'paid', 'balance', 'status', 'sold_at'])}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printInvoice(row, [], brand)}><Printer size={15} /> Invoice</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{editing && <RecordModal title="Sales Record" fields={fields} record={editing} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store="sales" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  return <div className="stack"><section className="panel"><ModuleHeader title="Sales Records" query={query} setQuery={setQuery} onAdd={() => setEditing({ invoice_number: `MANUAL-${Date.now()}`, payment_type: 'cash', status: 'Paid' })} onExport={() => exportCsv('sales.csv', filtered)} onPrint={() => printTable('Sales Records', filtered, ['invoice_number', 'customer_name', 'total', 'paid', 'balance', 'status'])} /><DataTable rows={filtered} columns={['invoice_number', 'customer_name', 'payment_type', 'total', 'paid', 'balance', 'status', 'sold_at']} onAdd={() => setEditing({ invoice_number: `MANUAL-${Date.now()}`, payment_type: 'cash', status: 'Paid' })} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printInvoice(row, [], brand)}><Printer size={15} /> Invoice</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Sale Detail" row={viewing} columns={['invoice_number', 'customer_name', 'payment_type', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'status', 'sold_at']} onClose={() => setViewing(null)} />}{editing && <RecordModal title="Sales Record" fields={fields} record={editing} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store="sales" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function Repairs({ rows, refresh }) {
@@ -593,6 +621,7 @@ function ManualRepairReceipts({ rows, brand, refresh }) {
   const [editing, setEditing] = useState(null);
   const [query, setQuery] = useState('');
   const [deleting, setDeleting] = useState(null);
+  const [viewing, setViewing] = useState(null);
   const fields = [
     ['receipt_number', 'Receipt Number'], ['date', 'Date', 'date'], ['customer_name', 'Customer Name', 'text', true], ['phone', 'Phone Number'],
     ['device_name', 'Device Name', 'text', true], ['imei', 'IMEI Number'], ['problem', 'Problem Description'], ['repair_charges', 'Repair Charges', 'number', true],
@@ -608,12 +637,12 @@ function ManualRepairReceipts({ rows, brand, refresh }) {
     notify('Repair receipt saved successfully');
   }
   async function remove(row, mode) {
-    await deleteRecord('manual_repair_receipts', row.uuid, mode);
+    await deleteEverywhere('manual_repair_receipts', row, mode);
     setDeleting(null);
     await refresh();
     notify('Repair receipt deleted successfully');
   }
-  return <div className="stack"><section className="panel"><ModuleHeader title="Manual Repair Receipt System" query={query} setQuery={setQuery} onAdd={() => setEditing({ date: new Date().toISOString().slice(0, 10), template: 'Thermal Receipt', status: 'Received' })} onExport={() => exportCsv('manual_repair_receipts.csv', filtered)} onPrint={() => printTable('Repair Receipts', filtered, ['receipt_number', 'customer_name', 'phone', 'device_name', 'repair_charges', 'advance_payment', 'remaining_amount'])} /><DataTable rows={filtered} columns={['receipt_number', 'date', 'customer_name', 'phone', 'device_name', 'imei', 'repair_charges', 'advance_payment', 'remaining_amount', 'technician', 'delivery_date', 'status']} onAdd={() => setEditing({ date: new Date().toISOString().slice(0, 10), template: 'Thermal Receipt', status: 'Received' })} actions={(row) => <><button className="ghost-btn" onClick={() => printTable('Repair Receipt Detail', [row], ['receipt_number', 'date', 'customer_name', 'phone', 'device_name', 'imei', 'repair_charges', 'advance_payment', 'remaining_amount', 'technician', 'delivery_date', 'status'])}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printRepairReceipt(row, brand)}><Printer size={15} /> Print</button><button className="ghost-btn" onClick={() => downloadPdf(`${row.receipt_number}.pdf`, `Repair Receipt ${row.receipt_number}`, repairReceiptPdfLines(row, brand))}><FileDown size={15} /> PDF</button><button className="ghost-btn" onClick={() => whatsAppShare(row.phone, repairReceiptMessage(row, brand))}><MessageCircle size={15} /> WhatsApp</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{editing && <RecordModal title="Manual Repair Receipt" fields={fields} record={editing} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store="manual_repair_receipts" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  return <div className="stack"><section className="panel"><ModuleHeader title="Manual Repair Receipt System" query={query} setQuery={setQuery} onAdd={() => setEditing({ date: new Date().toISOString().slice(0, 10), template: 'Thermal Receipt', status: 'Received' })} onExport={() => exportCsv('manual_repair_receipts.csv', filtered)} onPrint={() => printTable('Repair Receipts', filtered, ['receipt_number', 'customer_name', 'phone', 'device_name', 'repair_charges', 'advance_payment', 'remaining_amount'])} /><DataTable rows={filtered} columns={['receipt_number', 'date', 'customer_name', 'phone', 'device_name', 'imei', 'repair_charges', 'advance_payment', 'remaining_amount', 'technician', 'delivery_date', 'status']} onAdd={() => setEditing({ date: new Date().toISOString().slice(0, 10), template: 'Thermal Receipt', status: 'Received' })} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printRepairReceipt(row, brand)}><Printer size={15} /> Print</button><button className="ghost-btn" onClick={() => downloadPdf(`${row.receipt_number}.pdf`, `Repair Receipt ${row.receipt_number}`, repairReceiptPdfLines(row, brand))}><FileDown size={15} /> PDF</button><button className="ghost-btn" onClick={() => whatsAppShare(row.phone, repairReceiptMessage(row, brand))}><MessageCircle size={15} /> WhatsApp</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Repair Receipt Detail" row={viewing} columns={['receipt_number', 'date', 'customer_name', 'phone', 'device_name', 'imei', 'problem', 'repair_charges', 'advance_payment', 'remaining_amount', 'technician', 'delivery_date', 'status']} onClose={() => setViewing(null)} />}{editing && <RecordModal title="Manual Repair Receipt" fields={fields} record={editing} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store="manual_repair_receipts" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function Purchases({ data, refresh }) {
@@ -621,6 +650,7 @@ function Purchases({ data, refresh }) {
   const [form, setForm] = useState({ supplier_uuid: '', invoice_number: '', paid: 0 });
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState(null);
+  const [viewing, setViewing] = useState(null);
   const [query, setQuery] = useState('');
   const total = cart.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.cost_price || 0), 0);
   const filtered = useMemo(() => filterRows(data.purchases || [], query, ['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status']), [data.purchases, query]);
@@ -634,7 +664,7 @@ function Purchases({ data, refresh }) {
     notify('Purchase saved successfully');
   }
   async function remove(row, mode) {
-    await deleteRecord('purchases', row.uuid, mode);
+    await deleteEverywhere('purchases', row, mode);
     setDeleting(null);
     await refresh();
     notify('Purchase deleted successfully');
@@ -642,7 +672,7 @@ function Purchases({ data, refresh }) {
   function closeCreate() {
     setCreating(false);
   }
-  return <div className="stack"><section className="panel"><ModuleHeader title="Purchase Management" query={query} setQuery={setQuery} onAdd={() => setCreating(true)} onExport={() => exportCsv('purchases.csv', filtered)} onPrint={() => printTable('Purchases', filtered, ['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status'])} /><DataTable rows={filtered} columns={['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status']} onAdd={() => setCreating(true)} actions={(row) => <><button className="ghost-btn" onClick={() => printTable('Purchase Detail', [row], ['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status'])}>View</button><button className="ghost-btn" onClick={() => printPurchaseReceipt(row)}><Printer size={15} /> Receipt</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{creating && <ModalShell onClose={closeCreate}><form onSubmit={submit}><div className="modal-header"><h2>Add Purchase</h2><button type="button" className="icon-btn" onClick={closeCreate} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Supplier<select value={form.supplier_uuid} onChange={(e) => setForm({ ...form, supplier_uuid: e.target.value })}><option value="">Select supplier</option>{(data.suppliers || []).map((supplier) => <option key={supplier.uuid} value={supplier.uuid}>{supplier.supplier_name}</option>)}</select></label><label>Invoice Number<input value={form.invoice_number} onChange={(e) => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Paid<input type="number" value={form.paid} onChange={(e) => setForm({ ...form, paid: e.target.value })} /></label></div><ProductLine products={data.products || []} onAdd={(item) => setCart([...cart, item])} /><DataTable rows={cart} columns={['product_name', 'quantity', 'cost_price']} actions={(row) => <button type="button" className="danger-btn" onClick={() => setCart(cart.filter((item) => item !== row))}><Trash2 size={15} /></button>} /><div className="totals"><strong>Total {money(total)}</strong></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={closeCreate}>Cancel</button><button className="primary-btn" disabled={!cart.length}>Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="purchases" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  return <div className="stack"><section className="panel"><ModuleHeader title="Purchase Management" query={query} setQuery={setQuery} onAdd={() => setCreating(true)} onExport={() => exportCsv('purchases.csv', filtered)} onPrint={() => printTable('Purchases', filtered, ['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status'])} /><DataTable rows={filtered} columns={['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status']} onAdd={() => setCreating(true)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => printPurchaseReceipt(row)}><Printer size={15} /> Receipt</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Purchase Detail" row={viewing} columns={['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status', 'purchased_at']} onClose={() => setViewing(null)} />}{creating && <ModalShell onClose={closeCreate}><form onSubmit={submit}><div className="modal-header"><h2>Add Purchase</h2><button type="button" className="icon-btn" onClick={closeCreate} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Supplier<select value={form.supplier_uuid} onChange={(e) => setForm({ ...form, supplier_uuid: e.target.value })}><option value="">Select supplier</option>{(data.suppliers || []).map((supplier) => <option key={supplier.uuid} value={supplier.uuid}>{supplier.supplier_name}</option>)}</select></label><label>Invoice Number<input value={form.invoice_number} onChange={(e) => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Paid<input type="number" value={form.paid} onChange={(e) => setForm({ ...form, paid: e.target.value })} /></label></div><ProductLine products={data.products || []} onAdd={(item) => setCart([...cart, item])} /><DataTable rows={cart} columns={['product_name', 'quantity', 'cost_price']} actions={(row) => <button type="button" className="danger-btn" onClick={() => setCart(cart.filter((item) => item !== row))}><Trash2 size={15} /></button>} /><div className="totals"><strong>Total {money(total)}</strong></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={closeCreate}>Cancel</button><button className="primary-btn" disabled={!cart.length}>Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="purchases" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function ProductLine({ products, onAdd }) {
@@ -655,7 +685,7 @@ function Notifications({ data, refresh }) {
   const [items, setItems] = useState([]);
   useEffect(() => { notificationCenter().then(setItems); }, [data]);
   async function dismiss(item) {
-    if (!String(item.uuid).includes('-')) await deleteRecord('notifications', item.uuid, 'soft');
+    if (!String(item.uuid).includes('-')) await deleteEverywhere('notifications', item, 'soft');
     await saveRecord('notifications', { uuid: crypto.randomUUID(), title: item.title, body: item.body, type: item.type, dismissed_source: item.uuid, deleted_at: new Date().toISOString() });
     await refresh?.();
     setItems((current) => current.filter((row) => row.uuid !== item.uuid));
@@ -714,7 +744,7 @@ function LicenseManager({ rows, refresh }) {
     }
   }
   async function remove(row, mode) {
-    await deleteRecord('licenses', row.uuid, mode);
+    await deleteEverywhere('licenses', row, mode);
     setDeleting(null);
     await refresh();
     notify('License deleted successfully');
@@ -776,10 +806,18 @@ function LicenseManager({ rows, refresh }) {
   );
 }
 
-function Accounting({ data }) {
+function Accounting({ data, refresh }) {
+  const [viewing, setViewing] = useState(null);
+  const [deleting, setDeleting] = useState(null);
   const debit = (data.cashbook || []).reduce((sum, row) => sum + Number(row.debit || 0), 0);
   const credit = (data.cashbook || []).reduce((sum, row) => sum + Number(row.credit || 0), 0);
-  return <div className="stack"><div className="metric-grid"><div className="metric"><span>Debit Entries</span><strong>{money(debit)}</strong></div><div className="metric"><span>Credit Entries</span><strong>{money(credit)}</strong></div><div className="metric"><span>Daily Closing</span><strong>{money(debit - credit)}</strong></div><div className="metric"><span>Profit & Loss</span><strong>{money((data.sales || []).reduce((sum, row) => sum + Number(row.profit || 0), 0) - (data.expenses || []).reduce((sum, row) => sum + Number(row.amount || 0), 0))}</strong></div></div><List title="Cash Book" rows={data.cashbook || []} cols={['type', 'description', 'debit', 'credit', 'entry_at']} /></div>;
+  async function remove(row, mode) {
+    await deleteEverywhere('cashbook', row, mode);
+    setDeleting(null);
+    await refresh();
+    notify('Cash book entry deleted successfully');
+  }
+  return <div className="stack"><div className="metric-grid"><div className="metric"><span>Debit Entries</span><strong>{money(debit)}</strong></div><div className="metric"><span>Credit Entries</span><strong>{money(credit)}</strong></div><div className="metric"><span>Daily Closing</span><strong>{money(debit - credit)}</strong></div><div className="metric"><span>Profit & Loss</span><strong>{money((data.sales || []).reduce((sum, row) => sum + Number(row.profit || 0), 0) - (data.expenses || []).reduce((sum, row) => sum + Number(row.amount || 0), 0))}</strong></div></div><section className="panel"><h2>Cash Book</h2><DataTable rows={data.cashbook || []} columns={['type', 'description', 'debit', 'credit', 'entry_at']} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Cash Book Detail" row={viewing} columns={['type', 'description', 'debit', 'credit', 'reference', 'entry_at']} onClose={() => setViewing(null)} />}{deleting && <DeleteDialog row={deleting} store="cashbook" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function Reports({ refreshKey }) {

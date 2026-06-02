@@ -138,6 +138,37 @@ export async function saveRemoteRecord(resource, data, options = {}) {
   return payload;
 }
 
+export async function deleteRemoteRecord(resource, uuid, mode = 'soft') {
+  const token = localStorage.getItem('dsh_token') || '';
+  const apiResource = apiResourceName(resource);
+  const response = await fetch(`${API_URL}/${apiResource}/${uuid}${mode === 'permanent' ? '?force=1' : ''}`, {
+    method: 'DELETE',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!response.ok && response.status !== 404) {
+    const payload = await response.json().catch(() => ({}));
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Remote delete failed.';
+    throw new Error(detail);
+  }
+  return true;
+}
+
+function apiResourceName(resource) {
+  return {
+    customer_ledgers: 'customer-ledgers',
+    supplier_ledgers: 'supplier-ledgers',
+    sale_items: 'sale-items',
+    purchase_items: 'purchase-items',
+    repair_updates: 'repair-updates',
+    inventory_transactions: 'inventory-transactions',
+    manual_repair_receipts: 'manual-repair-receipts',
+    audit_logs: 'audit-logs',
+  }[resource] || resource;
+}
+
 function remotePayload(data) {
   const { id, created_at, updated_at, deleted_at, sync_status, ...payload } = data;
   return payload;
