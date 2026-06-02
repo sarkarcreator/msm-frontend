@@ -682,7 +682,7 @@ function LicenseManager({ rows, refresh }) {
       await saveRemoteRecord('licenses', form);
     } else {
       const license = await generateLicense(form);
-      await saveRemoteRecord('licenses', license);
+      await saveRemoteRecord('licenses', license, { forceCreate: true });
     }
     setForm(newLicenseForm());
     setCreating(false);

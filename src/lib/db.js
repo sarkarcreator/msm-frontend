@@ -115,11 +115,12 @@ export async function saveRecord(store, data, action = data.uuid ? 'update' : 'c
   return clean;
 }
 
-export async function saveRemoteRecord(resource, data) {
+export async function saveRemoteRecord(resource, data, options = {}) {
   const token = localStorage.getItem('dsh_token') || '';
   const uuid = data.uuid;
-  const response = await fetch(`${API_URL}/${resource}${uuid ? `/${uuid}` : ''}`, {
-    method: uuid ? 'PUT' : 'POST',
+  const forceCreate = options.forceCreate || false;
+  const response = await fetch(`${API_URL}/${resource}${uuid && !forceCreate ? `/${uuid}` : ''}`, {
+    method: uuid && !forceCreate ? 'PUT' : 'POST',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',

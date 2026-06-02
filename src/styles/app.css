@@ -152,6 +152,7 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .login-form label { @apply grid gap-1 text-sm font-bold text-black/60 dark:text-white/60; }
 .login-form input { @apply h-11 rounded-2xl border border-black/10 bg-white px-3 text-ink outline-none focus:border-mint dark:border-white/10 dark:bg-black/20 dark:text-white; }
 .login-form .primary-btn { @apply mt-2 w-full justify-center; }
+.login-form .primary-btn:disabled { @apply bg-mint/70 text-white opacity-100; }
 .login-error { @apply rounded border border-coral/30 bg-coral/10 px-3 py-2 text-sm font-bold text-coral; }
 .detail-grid { @apply grid gap-3 sm:grid-cols-2; }
 .detail-item { @apply grid gap-1 rounded-2xl border border-black/10 bg-paper/70 p-3 dark:border-white/10 dark:bg-black/20; }
