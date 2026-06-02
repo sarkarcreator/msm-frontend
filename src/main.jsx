@@ -199,7 +199,7 @@ function App() {
     user: localStorage.getItem('dsh_user_name') || '',
     role: localStorage.getItem('dsh_user_role') || '',
   }));
-  const [dark, setDark] = useState(false);
+  const [dark, setDark] = useState(() => localStorage.getItem('msm_theme') === 'dark');
   const [online, setOnline] = useState(navigator.onLine);
   const [syncing, setSyncing] = useState(false);
   const [data, setData] = useState({});
@@ -244,7 +244,11 @@ function App() {
     }
   }, [authenticated, allowedModules, active]);
 
-  useEffect(() => document.documentElement.classList.toggle('dark', dark), [dark]);
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark);
+    document.body.classList.toggle('dark', dark);
+    localStorage.setItem('msm_theme', dark ? 'dark' : 'light');
+  }, [dark]);
 
   useEffect(() => {
     const handler = (event) => {

@@ -546,10 +546,12 @@ export async function dashboardSnapshot() {
 }
 
 export async function notificationCenter() {
-  const [products, sales, saved] = await Promise.all([
-    listRecords('products'), listRecords('sales'), listRecords('notifications'),
+  const [products, sales, repairs, receipts, suppliers, purchases, saved] = await Promise.all([
+    listRecords('products'), listRecords('sales'), listRecords('repairs'), listRecords('manual_repair_receipts'),
+    listRecords('suppliers'), listRecords('purchases'), listRecords('notifications'),
   ]);
   const dismissed = new Set(saved.map((item) => item.dismissed_source).filter(Boolean));
+  const isOpenRepair = (repair) => !['Delivered', 'Completed'].includes(String(repair.status || '').trim());
   const generated = [
     ...products
       .filter((product) => Number(product.quantity || 0) <= Number(product.low_stock_threshold || 3))
@@ -557,6 +559,18 @@ export async function notificationCenter() {
     ...sales
       .filter((sale) => Number(sale.profit || 0) < 0)
       .map((sale) => ({ uuid: `loss-${sale.uuid}`, type: 'Loss Alert', title: sale.invoice_number, body: `${sale.customer_name || 'Customer'} loss ${formatMoney(Math.abs(Number(sale.profit || 0)))}`, priority: 'high' })),
+    ...sales
+      .filter((sale) => Number(sale.balance || 0) > 0)
+      .map((sale) => ({ uuid: `credit-${sale.uuid}`, type: 'Pending Credit', title: sale.invoice_number, body: `${sale.customer_name || 'Customer'}: ${formatMoney(sale.balance)}`, priority: 'medium' })),
+    ...[...repairs, ...receipts]
+      .filter(isOpenRepair)
+      .map((repair) => ({ uuid: `repair-${repair.uuid}`, type: 'Pending Repair', title: repair.job_number || repair.receipt_number || repair.customer_name, body: `${repair.customer_name || ''} ${repair.device_name || ''}`.trim(), priority: 'medium' })),
+    ...suppliers
+      .filter((supplier) => Number(supplier.balance || 0) > 0)
+      .map((supplier) => ({ uuid: `supplier-${supplier.uuid}`, type: 'Supplier Payment Due', title: supplier.supplier_name, body: formatMoney(supplier.balance), priority: 'medium' })),
+    ...purchases
+      .filter((purchase) => Number(purchase.balance || 0) > 0)
+      .map((purchase) => ({ uuid: `purchase-${purchase.uuid}`, type: 'Supplier Payment Due', title: purchase.invoice_number, body: `${purchase.supplier_name || 'Supplier'}: ${formatMoney(purchase.balance)}`, priority: 'medium' })),
   ];
   return [...generated.filter((item) => !dismissed.has(item.uuid)), ...saved.filter((item) => !item.dismissed_source)].sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
 }
