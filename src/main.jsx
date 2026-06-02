@@ -150,8 +150,8 @@ const RESOURCES = {
     title: 'Patient Management',
     store: 'patients',
     search: ['patient_name', 'phone', 'cnic', 'doctor_name', 'diagnosis', 'status'],
-    columns: ['patient_name', 'phone', 'age', 'gender', 'doctor_name', 'fee', 'status', 'visit_date'],
-    fields: [['patient_name', 'Patient Name', 'text', true], ['phone', 'Phone'], ['age', 'Age', 'number'], ['gender', 'Gender', 'select', false, ['Male', 'Female', 'Other']], ['cnic', 'CNIC'], ['doctor_name', 'Doctor Name', 'text', true], ['assistant_name', 'Assistant / Compounder'], ['symptoms', 'Symptoms'], ['diagnosis', 'Diagnosis'], ['medicine', 'Medicine / Prescription'], ['fee', 'Fee', 'number'], ['status', 'Status', 'select', true, ['Waiting', 'Checked', 'Admitted', 'Discharged']], ['visit_date', 'Visit Date', 'date'], ['next_visit', 'Next Visit', 'date'], ['notes', 'Notes']],
+    columns: ['patient_name', 'phone', 'age', 'gender', 'doctor_name', 'medicine', 'medicine_days', 'next_visit', 'fee', 'status', 'visit_date'],
+    fields: [['patient_name', 'Patient Name', 'text', true], ['phone', 'Phone'], ['age', 'Age', 'number'], ['gender', 'Gender', 'select', false, ['Male', 'Female', 'Other']], ['cnic', 'CNIC'], ['doctor_name', 'Doctor Name', 'text', true], ['assistant_name', 'Assistant / Compounder'], ['symptoms', 'Symptoms'], ['diagnosis', 'Diagnosis'], ['medicine', 'Medicine / Prescription'], ['medicine_days', 'Medicine Days', 'number'], ['fee', 'Fee', 'number'], ['status', 'Status', 'select', true, ['Waiting', 'Checked', 'Admitted', 'Discharged']], ['visit_date', 'Visit Date', 'date'], ['next_visit', 'Next Checkup Date', 'date'], ['notes', 'Notes']],
     defaultRecord: ({ auth, brand }) => ({ status: 'Waiting', visit_date: new Date().toISOString().slice(0, 10), doctor_name: currentDoctorName(auth, brand) }),
   },
   assistants: {
@@ -238,6 +238,7 @@ const HEADER_LABELS = {
   assistant_name: 'Assistant',
   visit_date: 'Visit Date',
   next_visit: 'Next Visit',
+  medicine_days: 'Medicine Days',
   diagnosis: 'Diagnosis',
   medicine: 'Prescription',
 };
@@ -481,7 +482,7 @@ function HospitalDashboard({ data, auth, brand }) {
   const medicines = patients
     .filter((patient) => patient.medicine)
     .slice(0, 8)
-    .map((patient) => ({ uuid: patient.uuid, patient_name: patient.patient_name, medicine: patient.medicine, diagnosis: patient.diagnosis, visit_date: patient.visit_date }));
+    .map((patient) => ({ uuid: patient.uuid, patient_name: patient.patient_name, medicine: patient.medicine, medicine_days: patient.medicine_days, next_visit: patient.next_visit, diagnosis: patient.diagnosis, visit_date: patient.visit_date }));
   const cards = [
     ['Doctor', doctor || 'No Doctor', 'text'],
     ['Patients Today', todayPatients.length, false],
@@ -492,7 +493,7 @@ function HospitalDashboard({ data, auth, brand }) {
     ['Today Fees', feesToday, true],
     ['Active Assistants', assistants.filter((item) => item.status !== 'Disabled').length, false],
   ];
-  return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? value : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><section className="split"><DashboardTable title="Today's Patients" rows={todayPatients} cols={['patient_name', 'phone', 'age', 'diagnosis', 'medicine', 'status', 'visit_date']} emptyIcon={Users} emptyTitle="No Patients Today" emptyDescription="Patients checked today will appear here." /><DashboardTable title="Follow Up Patients" rows={followUps} cols={['patient_name', 'phone', 'diagnosis', 'medicine', 'next_visit', 'status']} emptyIcon={Bell} emptyTitle="No Follow Ups" emptyDescription="Upcoming follow-up patients will appear here." /></section><section className="split"><DashboardTable title="Medicine / Prescription History" rows={medicines} cols={['patient_name', 'medicine', 'diagnosis', 'visit_date']} emptyIcon={FileText} emptyTitle="No Medicine History" emptyDescription="Medicine prescribed to patients will appear here." /><DashboardTable title="Doctor Assistants" rows={assistants} cols={['name', 'phone', 'role', 'doctor_name', 'shift', 'status']} emptyIcon={Users} emptyTitle="No Assistants Added" emptyDescription="Add compounders or assistants for this doctor." /></section></div>;
+  return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? value : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><section className="split"><DashboardTable title="Today's Patients" rows={todayPatients} cols={['patient_name', 'phone', 'age', 'diagnosis', 'medicine', 'medicine_days', 'next_visit', 'status', 'visit_date']} emptyIcon={Users} emptyTitle="No Patients Today" emptyDescription="Patients checked today will appear here." /><DashboardTable title="Follow Up Patients" rows={followUps} cols={['patient_name', 'phone', 'diagnosis', 'medicine', 'medicine_days', 'next_visit', 'status']} emptyIcon={Bell} emptyTitle="No Follow Ups" emptyDescription="Upcoming follow-up patients will appear here." /></section><section className="split"><DashboardTable title="Medicine / Prescription History" rows={medicines} cols={['patient_name', 'medicine', 'medicine_days', 'next_visit', 'diagnosis', 'visit_date']} emptyIcon={FileText} emptyTitle="No Medicine History" emptyDescription="Medicine prescribed to patients will appear here." /><DashboardTable title="Doctor Assistants" rows={assistants} cols={['name', 'phone', 'role', 'doctor_name', 'shift', 'status']} emptyIcon={Users} emptyTitle="No Assistants Added" emptyDescription="Add compounders or assistants for this doctor." /></section></div>;
 }
 
 function currentDoctorName(auth, brand) {

@@ -703,10 +703,25 @@ export async function importCsvRecords(store, file) {
 }
 
 export function printHtml(title, html) {
-  const win = window.open('', '_blank', 'width=900,height=700');
-  if (!win) return;
-  win.document.write(printDocument(title, html));
-  win.document.close();
+  const iframe = document.createElement('iframe');
+  iframe.title = title;
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  document.body.appendChild(iframe);
+  const doc = iframe.contentWindow?.document;
+  if (!doc) return;
+  doc.open();
+  doc.write(printDocument(title, html));
+  doc.close();
+  window.setTimeout(() => {
+    iframe.contentWindow?.focus();
+    iframe.contentWindow?.print();
+    window.setTimeout(() => iframe.remove(), 1000);
+  }, 100);
 }
 
 export function downloadHtml(filename, title, html) {
@@ -818,7 +833,7 @@ async function supplierName(uuid) {
 }
 
 function normalizeNumbers(data) {
-  const numberFields = new Set(['quantity', 'package_quantity', 'units_per_package', 'loose_quantity', 'low_stock_threshold']);
+  const numberFields = new Set(['quantity', 'package_quantity', 'units_per_package', 'loose_quantity', 'low_stock_threshold', 'medicine_days', 'age']);
   return Object.fromEntries(Object.entries(data).map(([key, value]) => [key, MONEY_FIELDS.has(key) || numberFields.has(key) ? Number(value || 0) : value]));
 }
 
