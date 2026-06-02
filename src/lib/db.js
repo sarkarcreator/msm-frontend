@@ -17,9 +17,10 @@ const MONEY_FIELDS = new Set([
 ]);
 
 const DEFAULT_BRAND = {
-  software_name: 'Mobile Shop Management System',
+  software_name: 'Market Sales Management System',
   company_name: 'Digital Solutions Hub',
-  shop_name: 'Mobile Shop',
+  shop_name: 'Retail Shop',
+  business_type: 'General Store',
   owner_name: '',
   contact_number: '',
   phone: '',
