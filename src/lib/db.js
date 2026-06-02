@@ -7,12 +7,13 @@ export const STORE_NAMES = [
   'supplier_ledgers', 'sales', 'sale_items', 'purchases', 'purchase_items',
   'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
   'roles', 'permissions', 'settings', 'notifications', 'inventory_transactions',
-  'manual_repair_receipts', 'licenses', 'audit_logs', 'sync_queue',
+  'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants',
+  'licenses', 'audit_logs', 'sync_queue',
 ];
 
 const MONEY_FIELDS = new Set([
   'purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price',
-  'package_cost_price', 'total_cost', 'amount', 'charges', 'subtotal',
+  'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'charges', 'subtotal',
   'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit',
   'repair_charges', 'advance_payment', 'remaining_amount',
 ]);
@@ -45,11 +46,11 @@ const BUSINESS_SYNC_ENTITIES = new Set([
   'supplier_ledgers', 'sales', 'sale_items', 'purchases', 'purchase_items',
   'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
   'roles', 'permissions', 'settings', 'notifications', 'inventory_transactions',
-  'manual_repair_receipts', 'licenses',
+  'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'licenses',
 ]);
 
 export async function database() {
-  return openDB('dsh-production-db', 3, {
+  return openDB('dsh-production-db', 4, {
     upgrade(db) {
       for (const store of STORE_NAMES) {
         if (!db.objectStoreNames.contains(store)) {
@@ -122,7 +123,8 @@ export async function saveRemoteRecord(resource, data, options = {}) {
   const uuid = data.uuid;
   const forceCreate = options.forceCreate || false;
   const payloadData = remotePayload(data);
-  const request = (method, path = '') => fetch(`${API_URL}/${resource}${path}`, {
+  const apiResource = apiResourceName(resource);
+  const request = (method, path = '') => fetch(`${API_URL}/${apiResource}${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
@@ -172,6 +174,7 @@ function apiResourceName(resource) {
     repair_updates: 'repair-updates',
     inventory_transactions: 'inventory-transactions',
     manual_repair_receipts: 'manual-repair-receipts',
+    mobile_wallet_transactions: 'mobile-wallet-transactions',
     audit_logs: 'audit-logs',
   }[resource] || resource;
 }
@@ -186,6 +189,7 @@ async function markRecordSynced(resource, uuid) {
     'repair-updates': 'repair_updates',
     'inventory-transactions': 'inventory_transactions',
     'manual-repair-receipts': 'manual_repair_receipts',
+    'mobile-wallet-transactions': 'mobile_wallet_transactions',
     'audit-logs': 'audit_logs',
   }[resource] || resource;
   const db = await database();
@@ -496,6 +500,31 @@ export async function addExpense(record) {
   return expense;
 }
 
+export async function addMobileWalletTransaction(record) {
+  const amount = Number(record.amount || 0);
+  const fee = Number(record.fee || 0);
+  const direction = record.type || 'Cash In';
+  const debit = direction === 'Cash In' ? amount : 0;
+  const credit = direction === 'Cash Out' ? amount : 0;
+  const transaction = await saveRecord('mobile_wallet_transactions', {
+    ...record,
+    amount,
+    fee,
+    net_amount: amount - fee,
+    status: record.status || 'Completed',
+    transacted_at: record.transacted_at || new Date().toISOString(),
+  });
+  await saveRecord('cashbook', {
+    type: `${record.provider || 'Wallet'} ${direction}`,
+    description: `${transaction.customer_name || transaction.phone || 'Mobile wallet'} ${transaction.reference_number || ''}`.trim(),
+    debit,
+    credit,
+    reference: transaction.uuid,
+    entry_at: transaction.transacted_at,
+  });
+  return transaction;
+}
+
 export async function updateRepairStatus(repair, status, notes) {
   const updated = await saveRecord('repairs', { ...repair, status });
   await saveRecord('repair_updates', {
@@ -589,9 +618,10 @@ export async function saveBrandSettings(settings) {
 }
 
 export async function reportData(type) {
-  const [sales, saleItems, products, expenses, customers, suppliers, repairs, receipts, purchases] = await Promise.all([
+  const [sales, saleItems, products, expenses, customers, suppliers, repairs, receipts, purchases, wallets, patients, assistants] = await Promise.all([
     listRecords('sales'), listRecords('sale_items'), listRecords('products'), listRecords('expenses'),
     listRecords('customers'), listRecords('suppliers'), listRecords('repairs'), listRecords('manual_repair_receipts'), listRecords('purchases'),
+    listRecords('mobile_wallet_transactions'), listRecords('patients'), listRecords('assistants'),
   ]);
   const rows = {
     daily_sales: sales.filter((sale) => sameDay(sale.sold_at)),
@@ -609,6 +639,9 @@ export async function reportData(type) {
     supplier_ledger: await listRecords('supplier_ledgers'),
     repairs: [...repairs, ...receipts],
     credit_recovery: sales.filter((sale) => Number(sale.balance || 0) > 0),
+    mobile_wallets: wallets,
+    patients,
+    assistants,
   };
   return rows[type] || [];
 }

@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import {
   API_URL,
-  activeLicenseStatus, addExpense, createPurchase, createSale, dashboardSnapshot,
+  activeLicenseStatus, addExpense, addMobileWalletTransaction, createPurchase, createSale, dashboardSnapshot,
   activateLicenseAccount,
   cleanupStartupData, deleteRecord, deleteRemoteRecord, downloadPdf, ensureDeviceId, exportCsv, generateLicense,
   getBrandSettings, importCsvRecords, listRecords, notificationCenter,
@@ -26,6 +26,7 @@ const MODULES = [
   { id: 'products', label: 'Inventory', icon: Boxes },
   { id: 'customers', label: 'Customers', icon: Users },
   { id: 'credit', label: 'Udhaar', icon: WalletCards },
+  { id: 'mobileWallets', label: 'EasyPaisa / JazzCash', icon: WalletCards },
   { id: 'repairs', label: 'Repairs', icon: Wrench },
   { id: 'repairReceipts', label: 'Repair Receipts', icon: Printer },
   { id: 'purchases', label: 'Purchases', icon: Upload },
@@ -35,19 +36,24 @@ const MODULES = [
   { id: 'accounting', label: 'Accounting', icon: FileText },
   { id: 'reports', label: 'Reports', icon: Download },
   { id: 'users', label: 'Users', icon: Users },
+  { id: 'patients', label: 'Patients', icon: Users },
+  { id: 'assistants', label: 'Assistants', icon: Users },
   { id: 'licenses', label: 'Licenses', icon: KeyRound },
   { id: 'settings', label: 'Admin', icon: Settings },
 ];
 
-const SHOP_TYPES = ['Mobile Shop', 'Grocery Store', 'Pharmacy', 'General Store', 'Shopping Mall', 'Electronics Store', 'Clothing Store', 'Hardware Store'];
+const SHOP_TYPES = ['Mobile Shop', 'Hospital', 'Grocery Store', 'Pharmacy', 'General Store', 'Shopping Mall', 'Electronics Store', 'Clothing Store', 'Hardware Store'];
 const REPAIR_SHOP_TYPES = new Set(['Mobile Shop', 'Electronics Store']);
 
 const ROLE_MODULES = {
   'Super Admin': MODULES.map((item) => item.id),
-  Admin: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'accounting', 'reports', 'users'],
-  Manager: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports'],
-  Cashier: ['dashboard', 'pos', 'sales', 'customers', 'credit', 'repairReceipts', 'notifications'],
+  Admin: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'accounting', 'reports', 'users', 'patients', 'assistants'],
+  Manager: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports', 'patients', 'assistants'],
+  Cashier: ['dashboard', 'pos', 'sales', 'customers', 'credit', 'mobileWallets', 'repairReceipts', 'notifications'],
   Technician: ['dashboard', 'customers', 'repairs', 'repairReceipts', 'notifications'],
+  Doctor: ['dashboard', 'patients', 'assistants', 'expenses', 'notifications', 'reports'],
+  Compounder: ['dashboard', 'patients', 'notifications'],
+  Assistant: ['dashboard', 'patients', 'notifications'],
 };
 
 function userRole(user) {
@@ -56,8 +62,13 @@ function userRole(user) {
 
 function modulesForBusiness(modules, brand) {
   const type = brand?.business_type || 'General Store';
-  if (REPAIR_SHOP_TYPES.has(type)) return modules;
-  return modules.filter((item) => !['repairs', 'repairReceipts'].includes(item.id));
+  if (type === 'Hospital') {
+    return modules.filter((item) => ['dashboard', 'patients', 'assistants', 'expenses', 'notifications', 'accounting', 'reports', 'users'].includes(item.id));
+  }
+  let scoped = modules.filter((item) => !['patients', 'assistants'].includes(item.id));
+  if (type !== 'Mobile Shop') scoped = scoped.filter((item) => item.id !== 'mobileWallets');
+  if (!REPAIR_SHOP_TYPES.has(type)) scoped = scoped.filter((item) => !['repairs', 'repairReceipts'].includes(item.id));
+  return scoped;
 }
 
 function categoriesForBusiness(brand) {
@@ -71,6 +82,7 @@ function categoriesForBusiness(brand) {
     'Shopping Mall': ['General', 'Grocery', 'Electronics', 'Clothing', 'Household'],
     'Clothing Store': ['Clothing', 'Footwear', 'Accessories'],
     'Hardware Store': ['Hardware', 'Tools', 'Electrical', 'Plumbing'],
+    Hospital: ['Medicine', 'Healthcare', 'Lab Supplies', 'General'],
   };
   return groups[type] || groups['General Store'];
 }
@@ -111,6 +123,14 @@ const RESOURCES = {
     fields: [['category', 'Category', 'select', true, ['Rent', 'Electricity', 'Salary', 'Internet', 'Fuel', 'Maintenance', 'Other']], ['description', 'Description'], ['amount', 'Amount', 'number', true], ['spent_at', 'Date', 'date']],
     customSave: addExpense,
   },
+  mobile_wallet_transactions: {
+    title: 'EasyPaisa / JazzCash',
+    store: 'mobile_wallet_transactions',
+    search: ['provider', 'type', 'customer_name', 'phone', 'reference_number', 'status'],
+    columns: ['provider', 'type', 'customer_name', 'phone', 'amount', 'fee', 'net_amount', 'reference_number', 'status', 'transacted_at'],
+    fields: [['provider', 'Provider', 'select', true, ['EasyPaisa', 'JazzCash']], ['type', 'Type', 'select', true, ['Cash In', 'Cash Out']], ['customer_name', 'Customer Name'], ['phone', 'Phone'], ['amount', 'Amount', 'number', true], ['fee', 'Fee / Charges', 'number'], ['reference_number', 'Transaction ID'], ['status', 'Status', 'select', true, ['Completed', 'Pending', 'Failed']], ['transacted_at', 'Date', 'date'], ['notes', 'Notes']],
+    customSave: addMobileWalletTransaction,
+  },
   repairs: {
     title: 'Repair Management',
     store: 'repairs',
@@ -123,8 +143,22 @@ const RESOURCES = {
     store: 'users',
     search: ['name', 'email', 'role', 'status'],
     columns: ['name', 'email', 'role', 'status'],
-    fields: [['name', 'Name', 'text', true], ['email', 'Email', 'email', true], ['role', 'Role', 'select', true, ['Super Admin', 'Admin', 'Manager', 'Cashier', 'Technician']], ['status', 'Status', 'select', true, ['Active', 'Disabled']], ['password', 'Password']],
+    fields: [['name', 'Name', 'text', true], ['email', 'Email', 'email', true], ['role', 'Role', 'select', true, ['Super Admin', 'Admin', 'Manager', 'Cashier', 'Technician', 'Doctor', 'Compounder', 'Assistant']], ['status', 'Status', 'select', true, ['Active', 'Disabled']], ['password', 'Password']],
     customSave: saveUserAccount,
+  },
+  patients: {
+    title: 'Patient Management',
+    store: 'patients',
+    search: ['patient_name', 'phone', 'cnic', 'doctor_name', 'diagnosis', 'status'],
+    columns: ['patient_name', 'phone', 'age', 'gender', 'doctor_name', 'fee', 'status', 'visit_date'],
+    fields: [['patient_name', 'Patient Name', 'text', true], ['phone', 'Phone'], ['age', 'Age', 'number'], ['gender', 'Gender', 'select', false, ['Male', 'Female', 'Other']], ['cnic', 'CNIC'], ['doctor_name', 'Doctor Name', 'text', true], ['assistant_name', 'Assistant / Compounder'], ['symptoms', 'Symptoms'], ['diagnosis', 'Diagnosis'], ['medicine', 'Medicine / Prescription'], ['fee', 'Fee', 'number'], ['status', 'Status', 'select', true, ['Waiting', 'Checked', 'Admitted', 'Discharged']], ['visit_date', 'Visit Date', 'date'], ['next_visit', 'Next Visit', 'date'], ['notes', 'Notes']],
+  },
+  assistants: {
+    title: 'Assistant Management',
+    store: 'assistants',
+    search: ['name', 'phone', 'role', 'doctor_name', 'status'],
+    columns: ['name', 'phone', 'role', 'doctor_name', 'shift', 'status'],
+    fields: [['name', 'Assistant Name', 'text', true], ['phone', 'Phone'], ['role', 'Role', 'select', true, ['Compounder', 'Assistant', 'Receptionist', 'Nurse']], ['doctor_name', 'Doctor Name'], ['shift', 'Shift', 'select', false, ['Morning', 'Evening', 'Night', 'Full Day']], ['salary', 'Salary', 'number'], ['status', 'Status', 'select', true, ['Active', 'Disabled']], ['notes', 'Notes']],
   },
   settings: {
     title: 'Admin Panel Settings',
@@ -143,6 +177,8 @@ const MODULE_LABELS = {
   'Expense Management': 'Expense',
   'Repair Management': 'Repair',
   'User Management': 'User',
+  'Patient Management': 'Patient',
+  'Assistant Management': 'Assistant',
   'Sales Record': 'Sale',
   'Manual Repair Receipt': 'Repair Receipt',
   'Admin Panel Settings': 'Admin Setting',
@@ -152,6 +188,8 @@ const DEFAULT_RECORDS = {
   'Expense Management': () => ({ spent_at: new Date().toISOString().slice(0, 10) }),
   'Repair Management': () => ({ status: 'Received' }),
   'User Management': () => ({ status: 'Active', role: 'Cashier' }),
+  'Patient Management': () => ({ status: 'Waiting', visit_date: new Date().toISOString().slice(0, 10) }),
+  'Assistant Management': () => ({ status: 'Active', role: 'Compounder' }),
 };
 
 const BUSINESS_SYNC_ENTITIES = new Set([
@@ -159,7 +197,7 @@ const BUSINESS_SYNC_ENTITIES = new Set([
   'supplier_ledgers', 'sales', 'sale_items', 'purchases', 'purchase_items',
   'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
   'roles', 'permissions', 'settings', 'notifications', 'inventory_transactions',
-  'manual_repair_receipts', 'licenses',
+  'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'licenses',
 ]);
 
 const HEADER_LABELS = {
@@ -190,6 +228,16 @@ const HEADER_LABELS = {
   repair_charges: 'Repair Charges',
   advance_payment: 'Advance',
   remaining_amount: 'Remaining',
+  provider: 'Provider',
+  reference_number: 'Transaction ID',
+  transacted_at: 'Date',
+  patient_name: 'Patient',
+  doctor_name: 'Doctor',
+  assistant_name: 'Assistant',
+  visit_date: 'Visit Date',
+  next_visit: 'Next Visit',
+  diagnosis: 'Diagnosis',
+  medicine: 'Prescription',
 };
 
 function App() {
@@ -214,7 +262,7 @@ function App() {
 
   async function refresh() {
     await cleanupStartupData();
-    const stores = ['products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items', 'expenses', 'repairs', 'repair_updates', 'manual_repair_receipts', 'payments', 'cashbook', 'users', 'settings', 'notifications', 'licenses', 'audit_logs', 'inventory_transactions', 'customer_ledgers', 'supplier_ledgers', 'sync_queue'];
+    const stores = ['products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items', 'expenses', 'repairs', 'repair_updates', 'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'payments', 'cashbook', 'users', 'settings', 'notifications', 'licenses', 'audit_logs', 'inventory_transactions', 'customer_ledgers', 'supplier_ledgers', 'sync_queue'];
     const entries = await Promise.all(stores.map(async (store) => [store, await listRecords(store)]));
     setData(Object.fromEntries(entries));
     setSnapshot(await dashboardSnapshot());
@@ -314,6 +362,7 @@ function App() {
           {active === 'products' && <Inventory rows={data.products || []} brand={brand} refresh={refresh} />}
           {active === 'customers' && <CrudModule config={RESOURCES.customers} rows={data.customers || []} refresh={refresh} extraActions={(row) => <button className="ghost-btn" onClick={() => printLedger(row, data.customer_ledgers || [])}><Printer size={15} /> Ledger</button>} />}
           {active === 'credit' && <Credit data={data} refresh={refresh} />}
+          {active === 'mobileWallets' && <CrudModule config={RESOURCES.mobile_wallet_transactions} rows={data.mobile_wallet_transactions || []} refresh={refresh} />}
           {active === 'repairs' && <Repairs rows={data.repairs || []} refresh={refresh} />}
           {active === 'repairReceipts' && <ManualRepairReceipts rows={data.manual_repair_receipts || []} brand={brand} refresh={refresh} />}
           {active === 'purchases' && <Purchases data={data} refresh={refresh} />}
@@ -323,6 +372,8 @@ function App() {
           {active === 'accounting' && <Accounting data={data} refresh={refresh} />}
           {active === 'reports' && <Reports refreshKey={refreshKey} />}
           {active === 'users' && <CrudModule config={RESOURCES.users} rows={data.users || []} refresh={refresh} />}
+          {active === 'patients' && <CrudModule config={RESOURCES.patients} rows={data.patients || []} refresh={refresh} />}
+          {active === 'assistants' && <CrudModule config={RESOURCES.assistants} rows={data.assistants || []} refresh={refresh} />}
           {active === 'licenses' && <LicenseManager rows={data.licenses || []} refresh={refresh} />}
           {active === 'settings' && <SettingsPanel brand={brand} rows={data.settings || []} refresh={refresh} />}
         </div>
@@ -437,8 +488,8 @@ function CrudModule({ config, rows, refresh, extraActions }) {
   const displayRows = useMemo(() => config.rowMap ? config.rowMap(rows) : rows, [rows, config]);
   const filtered = useMemo(() => filterRows(displayRows, query, config.search), [displayRows, query, config.search]);
   async function submit(record) {
-    if (config.customSave) await config.customSave(record);
-    else await saveRecord(config.store, record);
+    const saved = config.customSave ? await config.customSave(record) : await saveRecord(config.store, record);
+    runInBackground(() => saveRemoteRecord(config.store, saved), `${config.title} synced in background`);
     setEditing(null);
     await refresh();
     notify('Record saved successfully');
@@ -880,7 +931,7 @@ function Reports({ refreshKey }) {
     setRows(await reportData(nextType));
   }
   useEffect(() => { generate(type); }, [refreshKey]);
-  return <section className="panel"><ModuleHeader title="Reports" query="" setQuery={() => {}} onAdd={null} onExport={() => exportCsv(`${type}.csv`, rows)} onPrint={() => printTable(type.replaceAll('_', ' '), rows, Object.keys(rows[0] || {}))} /><div className="module-actions report-actions"><button className="ghost-btn" onClick={() => downloadPdf(`${type}.pdf`, type.replaceAll('_', ' '), rowsToPdfLines(rows))}><FileDown size={16} /> Export PDF</button></div><div className="tabs">{['daily_sales', 'weekly_sales', 'monthly_sales', 'yearly_sales', 'product_sales', 'profit', 'inventory', 'customers', 'expenses', 'suppliers', 'purchases', 'customer_ledger', 'supplier_ledger', 'repairs', 'credit_recovery'].map((item) => <button className={type === item ? 'tab active' : 'tab'} key={item} onClick={() => generate(item)}>{item.replaceAll('_', ' ')}</button>)}</div><DataTable rows={rows} columns={Object.keys(rows[0] || { message: 'No Data Available' })} /></section>;
+  return <section className="panel"><ModuleHeader title="Reports" query="" setQuery={() => {}} onAdd={null} onExport={() => exportCsv(`${type}.csv`, rows)} onPrint={() => printTable(type.replaceAll('_', ' '), rows, Object.keys(rows[0] || {}))} /><div className="module-actions report-actions"><button className="ghost-btn" onClick={() => downloadPdf(`${type}.pdf`, type.replaceAll('_', ' '), rowsToPdfLines(rows))}><FileDown size={16} /> Export PDF</button></div><div className="tabs">{['daily_sales', 'weekly_sales', 'monthly_sales', 'yearly_sales', 'product_sales', 'profit', 'inventory', 'customers', 'expenses', 'suppliers', 'purchases', 'customer_ledger', 'supplier_ledger', 'repairs', 'credit_recovery', 'mobile_wallets', 'patients', 'assistants'].map((item) => <button className={type === item ? 'tab active' : 'tab'} key={item} onClick={() => generate(item)}>{item.replaceAll('_', ' ')}</button>)}</div><DataTable rows={rows} columns={Object.keys(rows[0] || { message: 'No Data Available' })} /></section>;
 }
 
 function ModuleHeader({ title, query, setQuery, onAdd, onImport, onExport, onPrint }) {
@@ -958,7 +1009,7 @@ function money(value) {
 
 function format(value, key) {
   if (key === 'status') return <span className={`status-tag ${statusClass(value)}`}>{String(value ?? '')}</span>;
-  if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent'].includes(key)) return money(value);
+  if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent'].includes(key)) return money(value);
   if (String(key).includes('_at') && value) return new Date(value).toLocaleString();
   return String(value ?? '');
 }
@@ -980,7 +1031,7 @@ function printTable(title, rows, columns) {
 }
 
 function printableFormat(value, key) {
-  if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent'].includes(key)) return money(value);
+  if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent'].includes(key)) return money(value);
   if (String(key).includes('_at') && value) return new Date(value).toLocaleString();
   return String(value ?? '');
 }
