@@ -679,10 +679,10 @@ function LicenseManager({ rows, refresh }) {
     e.preventDefault();
     if (form.uuid) {
       await saveRecord('licenses', form);
-      await saveRemoteRecord('licenses', form);
+      saveRemoteRecord('licenses', form).catch((error) => notify(error.message || 'License backend sync failed'));
     } else {
       const license = await generateLicense(form);
-      await saveRemoteRecord('licenses', license, { forceCreate: true });
+      saveRemoteRecord('licenses', license, { forceCreate: true }).catch((error) => notify(error.message || 'License backend sync failed'));
     }
     setForm(newLicenseForm());
     setCreating(false);
