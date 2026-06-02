@@ -1,0 +1,17 @@
+{
+  "name": "Digital Solutions Hub",
+  "short_name": "DSH",
+  "description": "Offline-first mobile shop POS, inventory, repair, credit and accounting system.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f4ed",
+  "theme_color": "#0f766e",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
