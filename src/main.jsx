@@ -161,6 +161,7 @@ const HEADER_LABELS = {
   low_stock_threshold: 'Low Stock Limit',
   total_spent: 'Total Spent',
   customer_name: 'Customer',
+  business_type: 'Shop Type',
   supplier_name: 'Supplier',
   invoice_number: 'Invoice No',
   receipt_number: 'Receipt No',
@@ -248,6 +249,9 @@ function App() {
     localStorage.setItem('dsh_user_name', session.user?.name || session.user?.email || 'User');
     localStorage.setItem('dsh_user_role', roleName);
     setAuth({ token: session.token, user: session.user?.name || session.user?.email || 'User', role: roleName });
+    if (session.settings) {
+      saveBrandSettings(session.settings).then(refresh);
+    }
   }
 
   function handleLogout() {
@@ -681,7 +685,8 @@ function SettingsPanel({ brand, rows, refresh }) {
 }
 
 function LicenseManager({ rows, refresh }) {
-  const newLicenseForm = () => ({ owner_name: '', device_id: ensureDeviceId(), type: '1 Month', status: 'Active' });
+  const licenseColumns = ['license_key', 'activation_code', 'owner_name', 'business_type', 'device_id', 'type', 'status', 'expiry_date'];
+  const newLicenseForm = () => ({ owner_name: '', business_type: 'Mobile Shop', device_id: ensureDeviceId(), type: '1 Month', status: 'Active' });
   const [form, setForm] = useState(newLicenseForm);
   const [status, setStatus] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -689,7 +694,7 @@ function LicenseManager({ rows, refresh }) {
   const [viewing, setViewing] = useState(null);
   const [query, setQuery] = useState('');
   useEffect(() => { activeLicenseStatus().then(setStatus); }, [rows]);
-  const filtered = useMemo(() => filterRows(rows, query, ['license_key', 'activation_code', 'owner_name', 'device_id', 'type', 'status', 'expiry_date']), [rows, query]);
+  const filtered = useMemo(() => filterRows(rows, query, licenseColumns), [rows, query]);
   async function submit(e) {
     e.preventDefault();
     try {
@@ -714,7 +719,61 @@ function LicenseManager({ rows, refresh }) {
     await refresh();
     notify('License deleted successfully');
   }
-  return <div className="stack"><section className="panel"><ModuleHeader title="License Management" query={query} setQuery={setQuery} onAdd={() => { setForm(newLicenseForm()); setCreating(true); }} onExport={() => exportCsv('licenses.csv', filtered)} onPrint={() => printTable('Licenses', filtered, ['license_key', 'activation_code', 'owner_name', 'device_id', 'type', 'status', 'expiry_date'])} /><div className="module-actions report-actions"><span className={`status-pill ${status?.valid ? 'ok' : 'bad'}`}><KeyRound size={15} /> {status?.message || 'Checking license'}</span></div><DataTable rows={filtered} columns={['license_key', 'activation_code', 'owner_name', 'device_id', 'type', 'status', 'expiry_date']} onAdd={() => { setForm(newLicenseForm()); setCreating(true); }} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => { setForm({ ...row, device_id: row.device_id || ensureDeviceId() }); setCreating(true); }}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => downloadPdf(`${row.license_key}.pdf`, 'License Certificate', [`License: ${row.license_key}`, `Activation: ${row.activation_code}`, `Owner: ${row.owner_name}`, `Device: ${row.device_id}`, `Type: ${row.type}`, `Expiry: ${row.expiry_date}`])}><FileDown size={15} /> PDF</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="License Detail" row={viewing} columns={['license_key', 'activation_code', 'owner_name', 'device_id', 'type', 'status', 'expiry_date']} onClose={() => setViewing(null)} />}{creating && <ModalShell onClose={() => setCreating(false)}><form onSubmit={submit}><div className="modal-header"><h2>{form.uuid ? 'Edit License' : 'Add License'}</h2><button type="button" className="icon-btn" onClick={() => setCreating(false)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Shop Owner<input required value={form.owner_name || ''} onChange={(e) => setForm({ ...form, owner_name: e.target.value })} /></label><label>Device Binding<input value={form.device_id || ensureDeviceId()} onChange={(e) => setForm({ ...form, device_id: e.target.value })} /></label><label>License Type<select value={form.type || '1 Month'} onChange={(e) => setForm({ ...form, type: e.target.value })}>{['1 Month', '6 Months', '1 Year', 'Lifetime'].map((item) => <option key={item}>{item}</option>)}</select></label><label>Status<select value={form.status || 'Active'} onChange={(e) => setForm({ ...form, status: e.target.value })}><option>Active</option><option>Disabled</option></select></label></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setCreating(false)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="licenses" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  return (
+    <div className="stack">
+      <section className="panel">
+        <ModuleHeader
+          title="License Management"
+          query={query}
+          setQuery={setQuery}
+          onAdd={() => { setForm(newLicenseForm()); setCreating(true); }}
+          onExport={() => exportCsv('licenses.csv', filtered)}
+          onPrint={() => printTable('Licenses', filtered, licenseColumns)}
+        />
+        <div className="module-actions report-actions">
+          <span className={`status-pill ${status?.valid ? 'ok' : 'bad'}`}><KeyRound size={15} /> {status?.message || 'Checking license'}</span>
+        </div>
+        <DataTable
+          rows={filtered}
+          columns={licenseColumns}
+          onAdd={() => { setForm(newLicenseForm()); setCreating(true); }}
+          actions={(row) => (
+            <>
+              <button className="ghost-btn" onClick={() => setViewing(row)}>View</button>
+              <button className="ghost-btn" onClick={() => { setForm({ ...row, business_type: row.business_type || 'Mobile Shop', device_id: row.device_id || ensureDeviceId() }); setCreating(true); }}><Edit3 size={15} /> Edit</button>
+              <button className="ghost-btn" onClick={() => downloadPdf(`${row.license_key}.pdf`, 'License Certificate', [`License: ${row.license_key}`, `Activation: ${row.activation_code}`, `Owner: ${row.owner_name}`, `Shop Type: ${row.business_type || 'Mobile Shop'}`, `Device: ${row.device_id}`, `Type: ${row.type}`, `Expiry: ${row.expiry_date}`])}><FileDown size={15} /> PDF</button>
+              <button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button>
+            </>
+          )}
+        />
+      </section>
+      {viewing && <DetailModal title="License Detail" row={viewing} columns={licenseColumns} onClose={() => setViewing(null)} />}
+      {creating && (
+        <ModalShell onClose={() => setCreating(false)}>
+          <form onSubmit={submit}>
+            <div className="modal-header">
+              <h2>{form.uuid ? 'Edit License' : 'Add License'}</h2>
+              <button type="button" className="icon-btn" onClick={() => setCreating(false)} title="Close"><X size={17} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="form-grid">
+                <label>Shop Owner<input required value={form.owner_name || ''} onChange={(e) => setForm({ ...form, owner_name: e.target.value })} /></label>
+                <label>Shop Type<select value={form.business_type || 'Mobile Shop'} onChange={(e) => setForm({ ...form, business_type: e.target.value })}>{SHOP_TYPES.map((item) => <option key={item}>{item}</option>)}</select></label>
+                <label>Device Binding<input value={form.device_id || ensureDeviceId()} onChange={(e) => setForm({ ...form, device_id: e.target.value })} /></label>
+                <label>License Type<select value={form.type || '1 Month'} onChange={(e) => setForm({ ...form, type: e.target.value })}>{['1 Month', '6 Months', '1 Year', 'Lifetime'].map((item) => <option key={item}>{item}</option>)}</select></label>
+                <label>Status<select value={form.status || 'Active'} onChange={(e) => setForm({ ...form, status: e.target.value })}><option>Active</option><option>Disabled</option></select></label>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="ghost-btn" onClick={() => setCreating(false)}>Cancel</button>
+              <button className="primary-btn">Save</button>
+            </div>
+          </form>
+        </ModalShell>
+      )}
+      {deleting && <DeleteDialog row={deleting} store="licenses" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}
+    </div>
+  );
 }
 
 function Accounting({ data }) {

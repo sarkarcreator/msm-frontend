@@ -266,7 +266,7 @@ export async function quickCustomer({ name, phone, address, cnic, notes }) {
   });
 }
 
-export async function generateLicense({ owner_name, device_id, type = '1 Month', status = 'Active' }) {
+export async function generateLicense({ owner_name, business_type = 'Mobile Shop', device_id, type = '1 Month', status = 'Active' }) {
   const months = { '1 Month': 1, '6 Months': 6, '1 Year': 12, Lifetime: 1200 }[type] || 1;
   const expiry = new Date();
   expiry.setMonth(expiry.getMonth() + months);
@@ -275,6 +275,7 @@ export async function generateLicense({ owner_name, device_id, type = '1 Month',
     license_key: `DSH-${crypto.randomUUID().slice(0, 8).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`,
     activation_code: crypto.randomUUID().slice(0, 12).toUpperCase(),
     owner_name,
+    business_type,
     device_id: device_id || ensureDeviceId(),
     type,
     status,
