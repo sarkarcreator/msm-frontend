@@ -5,8 +5,10 @@ import {
   FileText, KeyRound, Keyboard, MessageCircle, Moon, Palette, Plus, Printer,
   ReceiptText, Search, Settings, Smartphone, Sun, Trash2, Upload, Users,
   WalletCards, Wrench, X,
+  LogOut,
 } from 'lucide-react';
 import {
+  API_URL,
   activeLicenseStatus, addExpense, createPurchase, createSale, dashboardSnapshot,
   cleanupStartupData, deleteRecord, downloadPdf, ensureDeviceId, exportCsv, generateLicense,
   getBrandSettings, importCsvRecords, listRecords, notificationCenter,
@@ -142,6 +144,10 @@ const HEADER_LABELS = {
 
 function App() {
   const [active, setActive] = useState('dashboard');
+  const [auth, setAuth] = useState(() => ({
+    token: localStorage.getItem('dsh_token') || '',
+    user: localStorage.getItem('dsh_user_name') || '',
+  }));
   const [dark, setDark] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const [syncing, setSyncing] = useState(false);
@@ -150,6 +156,8 @@ function App() {
   const [brand, setBrand] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [toast, setToast] = useState('');
+
+  const authenticated = Boolean(auth.token);
 
   async function refresh() {
     await cleanupStartupData();
@@ -162,7 +170,6 @@ function App() {
   }
 
   useEffect(() => {
-    refresh();
     navigator.serviceWorker?.register('/sw.js');
     const onOnline = () => setOnline(true);
     const onOffline = () => setOnline(false);
@@ -173,6 +180,10 @@ function App() {
       window.removeEventListener('offline', onOffline);
     };
   }, []);
+
+  useEffect(() => {
+    if (authenticated) refresh();
+  }, [authenticated]);
 
   useEffect(() => document.documentElement.classList.toggle('dark', dark), [dark]);
 
@@ -193,6 +204,24 @@ function App() {
     setSyncing(false);
   }
 
+  function handleLogin(session) {
+    localStorage.setItem('dsh_token', session.token);
+    localStorage.setItem('dsh_user_name', session.user?.name || session.user?.email || 'User');
+    setAuth({ token: session.token, user: session.user?.name || session.user?.email || 'User' });
+  }
+
+  function handleLogout() {
+    localStorage.removeItem('dsh_token');
+    localStorage.removeItem('dsh_user_name');
+    setAuth({ token: '', user: '' });
+    setData({});
+    setSnapshot(null);
+  }
+
+  if (!authenticated) {
+    return <LoginScreen brand={brand} onLogin={handleLogin} />;
+  }
+
   return (
     <main className="min-h-screen bg-paper text-ink dark:bg-[#182322] dark:text-[#eef7f2]" style={{ '--accent': brand?.theme_color || '#14B8A6' }}>
       <aside className="sidebar">
@@ -206,6 +235,7 @@ function App() {
             <StatusPill online={online} syncing={syncing} />
             <button className="icon-btn" onClick={handleSync} title="Sync now"><Cloud size={18} /></button>
             <button className="icon-btn" onClick={() => setDark((value) => !value)} title="Toggle theme">{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
+            <button className="icon-btn" onClick={handleLogout} title={`Logout ${auth.user || ''}`}><LogOut size={18} /></button>
           </div>
         </header>
         <div className="content">
@@ -232,6 +262,34 @@ function App() {
       {toast && <div className="toast">{toast}</div>}
     </main>
   );
+}
+
+function LoginScreen({ brand, onLogin }) {
+  const [form, setForm] = useState({ email: 'admin@dsh.local', password: '' });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(event) {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const response = await fetch(`${API_URL}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'Login failed. Check email and password.');
+      onLogin(payload);
+    } catch (err) {
+      setError(err.message || 'Login failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return <main className="login-page"><section className="login-panel"><div className="login-brand"><span>{initials(brand?.shop_name || brand?.company_name || 'MS')}</span><div><strong>{brand?.software_name || 'Mobile Shop Management System'}</strong><small>{brand?.company_name || 'Secure admin login'}</small></div></div><form onSubmit={submit} className="login-form"><label>Email<input type="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label><label>Password<input type="password" required value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>{error && <p className="login-error">{error}</p>}<button className="primary-btn" disabled={loading}>{loading ? 'Signing in...' : 'Login'}</button></form></section></main>;
 }
 
 function NavButton({ item, active, onClick }) {
