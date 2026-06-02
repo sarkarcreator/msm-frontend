@@ -819,13 +819,16 @@ function notify(message) {
 
 async function deleteEverywhere(store, row, mode) {
   await deleteRecord(store, row.uuid, mode);
-  runInBackground(() => deleteRemoteRecord(store, row.uuid, mode), 'Delete synced in background');
+  runInBackground(() => deleteRemoteRecord(store, row.uuid, mode), store === 'master_catalogs' ? '' : 'Delete synced in background');
 }
 
 function runInBackground(task, successMessage) {
   task()
     .then(() => successMessage && notify(successMessage))
-    .catch((error) => notify(error.message || 'Background sync failed. It will retry later.'));
+    .catch((error) => {
+      console.warn(error.message || 'Background sync failed. It will retry later.');
+      if (successMessage) notify(error.message || 'Background sync failed. It will retry later.');
+    });
 }
 
 function POS2({ data, brand, refresh }) {
