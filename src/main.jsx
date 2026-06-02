@@ -38,6 +38,18 @@ const MODULES = [
   { id: 'settings', label: 'Admin', icon: Settings },
 ];
 
+const ROLE_MODULES = {
+  'Super Admin': MODULES.map((item) => item.id),
+  Admin: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'accounting', 'reports', 'users'],
+  Manager: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports'],
+  Cashier: ['dashboard', 'pos', 'sales', 'customers', 'credit', 'repairReceipts', 'notifications'],
+  Technician: ['dashboard', 'customers', 'repairs', 'repairReceipts', 'notifications'],
+};
+
+function userRole(user) {
+  return user?.role?.name || user?.role_name || user?.role || 'Cashier';
+}
+
 const RESOURCES = {
   products: {
     title: 'Inventory Management',
@@ -148,6 +160,7 @@ function App() {
   const [auth, setAuth] = useState(() => ({
     token: localStorage.getItem('dsh_token') || '',
     user: localStorage.getItem('dsh_user_name') || '',
+    role: localStorage.getItem('dsh_user_role') || '',
   }));
   const [dark, setDark] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
@@ -159,6 +172,8 @@ function App() {
   const [toast, setToast] = useState('');
 
   const authenticated = Boolean(auth.token);
+  const role = auth.role || 'Cashier';
+  const allowedModules = useMemo(() => MODULES.filter((item) => (ROLE_MODULES[role] || ROLE_MODULES.Cashier).includes(item.id)), [role]);
 
   async function refresh() {
     await cleanupStartupData();
@@ -186,6 +201,12 @@ function App() {
     if (authenticated) refresh();
   }, [authenticated]);
 
+  useEffect(() => {
+    if (authenticated && allowedModules.length && !allowedModules.some((item) => item.id === active)) {
+      setActive(allowedModules[0].id);
+    }
+  }, [authenticated, allowedModules, active]);
+
   useEffect(() => document.documentElement.classList.toggle('dark', dark), [dark]);
 
   useEffect(() => {
@@ -206,15 +227,18 @@ function App() {
   }
 
   function handleLogin(session) {
+    const roleName = userRole(session.user);
     localStorage.setItem('dsh_token', session.token);
     localStorage.setItem('dsh_user_name', session.user?.name || session.user?.email || 'User');
-    setAuth({ token: session.token, user: session.user?.name || session.user?.email || 'User' });
+    localStorage.setItem('dsh_user_role', roleName);
+    setAuth({ token: session.token, user: session.user?.name || session.user?.email || 'User', role: roleName });
   }
 
   function handleLogout() {
     localStorage.removeItem('dsh_token');
     localStorage.removeItem('dsh_user_name');
-    setAuth({ token: '', user: '' });
+    localStorage.removeItem('dsh_user_role');
+    setAuth({ token: '', user: '', role: '' });
     setData({});
     setSnapshot(null);
   }
@@ -227,11 +251,11 @@ function App() {
     <main className="min-h-screen bg-paper text-ink dark:bg-[#182322] dark:text-[#eef7f2]" style={{ '--accent': brand?.theme_color || '#14B8A6' }}>
       <aside className="sidebar">
         <div className="brand-block">{brand?.logo ? <img src={brand.logo} alt="" /> : <span>{initials(brand?.shop_name || brand?.company_name || 'MS')}</span>}<div><strong>{brand?.software_name || 'Mobile Shop'}</strong><small>{brand?.shop_name || brand?.company_name || 'Production Admin Panel'}</small></div></div>
-        <nav>{MODULES.map((item) => <NavButton key={item.id} item={item} active={active === item.id} onClick={() => setActive(item.id)} />)}</nav>
+        <nav>{allowedModules.map((item) => <NavButton key={item.id} item={item} active={active === item.id} onClick={() => setActive(item.id)} />)}</nav>
       </aside>
       <section className="workspace">
         <header className="topbar">
-          <div><h1>{MODULES.find((item) => item.id === active)?.label}</h1><p>{brand?.shop_name || brand?.company_name || 'Mobile Shop'} - Offline-first records, receipts, sync and audit history.</p></div>
+          <div><h1>{allowedModules.find((item) => item.id === active)?.label}</h1><p>{brand?.shop_name || brand?.company_name || 'Mobile Shop'} - {auth.user} ({role})</p></div>
           <div className="top-actions">
             <StatusPill online={online} syncing={syncing} />
             <button className="icon-btn" onClick={handleSync} title="Sync now"><Cloud size={18} /></button>
