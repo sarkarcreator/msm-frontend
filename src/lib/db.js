@@ -122,8 +122,8 @@ export async function saveRemoteRecord(resource, data, options = {}) {
   const uuid = data.uuid;
   const forceCreate = options.forceCreate || false;
   const payloadData = remotePayload(data);
-  const response = await fetch(`${API_URL}/${resource}${uuid && !forceCreate ? `/${uuid}` : ''}`, {
-    method: uuid && !forceCreate ? 'PUT' : 'POST',
+  const request = (method, path = '') => fetch(`${API_URL}/${resource}${path}`, {
+    method,
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
@@ -131,6 +131,10 @@ export async function saveRemoteRecord(resource, data, options = {}) {
     },
     body: JSON.stringify(payloadData),
   });
+  let response = await request(uuid && !forceCreate ? 'PUT' : 'POST', uuid && !forceCreate ? `/${uuid}` : '');
+  if (response.status === 404 && uuid && !forceCreate) {
+    response = await request('POST');
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Remote save failed.';
