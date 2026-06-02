@@ -8,7 +8,7 @@ export const STORE_NAMES = [
   'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
   'roles', 'permissions', 'settings', 'notifications', 'inventory_transactions',
   'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants',
-  'licenses', 'audit_logs', 'sync_queue',
+  'master_catalogs', 'licenses', 'audit_logs', 'sync_queue',
 ];
 
 const MONEY_FIELDS = new Set([
@@ -46,11 +46,12 @@ const BUSINESS_SYNC_ENTITIES = new Set([
   'supplier_ledgers', 'sales', 'sale_items', 'purchases', 'purchase_items',
   'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
   'roles', 'permissions', 'settings', 'notifications', 'inventory_transactions',
-  'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'licenses',
+  'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants',
+  'master_catalogs', 'licenses',
 ]);
 
 export async function database() {
-  return openDB('dsh-production-db', 4, {
+  return openDB('dsh-production-db', 5, {
     upgrade(db) {
       for (const store of STORE_NAMES) {
         if (!db.objectStoreNames.contains(store)) {
@@ -175,6 +176,7 @@ function apiResourceName(resource) {
     inventory_transactions: 'inventory-transactions',
     manual_repair_receipts: 'manual-repair-receipts',
     mobile_wallet_transactions: 'mobile-wallet-transactions',
+    master_catalogs: 'master-catalogs',
     audit_logs: 'audit-logs',
   }[resource] || resource;
 }
@@ -190,6 +192,7 @@ async function markRecordSynced(resource, uuid) {
     'inventory-transactions': 'inventory_transactions',
     'manual-repair-receipts': 'manual_repair_receipts',
     'mobile-wallet-transactions': 'mobile_wallet_transactions',
+    'master-catalogs': 'master_catalogs',
     'audit-logs': 'audit_logs',
   }[resource] || resource;
   const db = await database();
@@ -700,6 +703,65 @@ export async function importCsvRecords(store, file) {
   });
   for (const record of records) await saveRecord(store, record);
   return records.length;
+}
+
+export async function importMasterCatalogCsv(file) {
+  const text = await file.text();
+  const [headerLine, ...lines] = text.split(/\r?\n/).filter(Boolean);
+  const headers = headerLine.split(',').map((item) => item.replace(/^"|"$/g, '').trim());
+  const db = await database();
+  const tx = db.transaction('master_catalogs', 'readwrite');
+  const now = new Date().toISOString();
+  let count = 0;
+  for (const line of lines) {
+    const cells = line.match(/("([^"]|"")*"|[^,]+)/g) || [];
+    const record = Object.fromEntries(headers.map((header, index) => [header, String(cells[index] || '').replace(/^"|"$/g, '').replaceAll('""', '"')]));
+    if (!record.name) continue;
+    await tx.store.put({ ...record, uuid: record.uuid || crypto.randomUUID(), updated_at: now, sync_status: 'local' });
+    count += 1;
+  }
+  await tx.done;
+  await auditLog('bulk_import', 'master_catalogs', crypto.randomUUID(), { count });
+  return count;
+}
+
+export async function exportBackupFile(filename = 'msm-full-backup.json') {
+  const db = await database();
+  const stores = {};
+  for (const store of STORE_NAMES) {
+    stores[store] = await db.getAll(store);
+  }
+  const payload = {
+    app: 'Market Sales Management System',
+    version: 1,
+    exported_at: new Date().toISOString(),
+    device_id: localStorage.getItem('dsh_device_id') || ensureDeviceId(),
+    stores,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+  return payload;
+}
+
+export async function importBackupFile(file) {
+  const payload = JSON.parse(await file.text());
+  if (!payload?.stores || typeof payload.stores !== 'object') throw new Error('Invalid backup file.');
+  const db = await database();
+  let count = 0;
+  for (const [store, rows] of Object.entries(payload.stores)) {
+    if (!STORE_NAMES.includes(store) || !Array.isArray(rows)) continue;
+    for (const row of rows) {
+      if (!row?.uuid) continue;
+      await db.put(store, row);
+      count += 1;
+    }
+  }
+  return count;
 }
 
 export function printHtml(title, html) {

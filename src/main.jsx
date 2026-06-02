@@ -11,8 +11,8 @@ import {
   API_URL,
   activeLicenseStatus, addExpense, addMobileWalletTransaction, createPurchase, createSale, dashboardSnapshot,
   activateLicenseAccount,
-  cleanupStartupData, deleteRecord, deleteRemoteRecord, downloadPdf, ensureDeviceId, exportCsv, generateLicense,
-  getBrandSettings, importCsvRecords, listRecords, notificationCenter,
+  cleanupStartupData, deleteRecord, deleteRemoteRecord, downloadPdf, ensureDeviceId, exportBackupFile, exportCsv, generateLicense,
+  getBrandSettings, importBackupFile, importCsvRecords, importMasterCatalogCsv, listRecords, notificationCenter,
   printHtml, quickCustomer, receiptQrData, receiveCustomerPayment,
   reportData, saveBrandSettings, saveRecord, saveRemoteRecord, saveUserAccount, syncNow, updateRepairStatus,
   whatsAppShare, createManualRepairReceipt,
@@ -35,6 +35,8 @@ const MODULES = [
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'accounting', label: 'Accounting', icon: FileText },
   { id: 'reports', label: 'Reports', icon: Download },
+  { id: 'catalog', label: 'Master Catalog', icon: Boxes },
+  { id: 'backup', label: 'Backup', icon: Download },
   { id: 'users', label: 'Users', icon: Users },
   { id: 'patients', label: 'Patients', icon: Users },
   { id: 'assistants', label: 'Assistants', icon: Users },
@@ -47,13 +49,13 @@ const REPAIR_SHOP_TYPES = new Set(['Mobile Shop', 'Electronics Store']);
 
 const ROLE_MODULES = {
   'Super Admin': MODULES.map((item) => item.id),
-  Admin: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'accounting', 'reports', 'users', 'patients', 'assistants'],
-  Manager: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports', 'patients', 'assistants'],
+  Admin: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'backup', 'users', 'patients', 'assistants'],
+  Manager: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports', 'catalog', 'patients', 'assistants'],
   Cashier: ['dashboard', 'pos', 'sales', 'customers', 'credit', 'mobileWallets', 'repairReceipts', 'notifications'],
   Technician: ['dashboard', 'customers', 'repairs', 'repairReceipts', 'notifications'],
-  Doctor: ['dashboard', 'patients', 'assistants', 'expenses', 'notifications', 'reports'],
-  Compounder: ['dashboard', 'patients', 'notifications'],
-  Assistant: ['dashboard', 'patients', 'notifications'],
+  Doctor: ['dashboard', 'patients', 'assistants', 'expenses', 'notifications', 'reports', 'catalog', 'backup'],
+  Compounder: ['dashboard', 'patients', 'notifications', 'catalog'],
+  Assistant: ['dashboard', 'patients', 'notifications', 'catalog'],
 };
 
 function userRole(user) {
@@ -63,7 +65,7 @@ function userRole(user) {
 function modulesForBusiness(modules, brand) {
   const type = brand?.business_type || 'General Store';
   if (type === 'Hospital') {
-    return modules.filter((item) => ['dashboard', 'patients', 'assistants', 'expenses', 'notifications', 'accounting', 'reports', 'users'].includes(item.id));
+    return modules.filter((item) => ['dashboard', 'patients', 'assistants', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'backup', 'users'].includes(item.id));
   }
   let scoped = modules.filter((item) => !['patients', 'assistants'].includes(item.id));
   if (type !== 'Mobile Shop') scoped = scoped.filter((item) => item.id !== 'mobileWallets');
@@ -162,6 +164,14 @@ const RESOURCES = {
     fields: [['name', 'Assistant Name', 'text', true], ['phone', 'Phone'], ['role', 'Role', 'select', true, ['Compounder', 'Assistant', 'Receptionist', 'Nurse']], ['doctor_name', 'Doctor Name'], ['shift', 'Shift', 'select', false, ['Morning', 'Evening', 'Night', 'Full Day']], ['salary', 'Salary', 'number'], ['status', 'Status', 'select', true, ['Active', 'Disabled']], ['notes', 'Notes']],
     defaultRecord: ({ auth, brand }) => ({ status: 'Active', role: 'Compounder', doctor_name: currentDoctorName(auth, brand) }),
   },
+  master_catalogs: {
+    title: 'Master Catalog',
+    store: 'master_catalogs',
+    search: ['name', 'business_type', 'category', 'brand', 'type', 'unit', 'notes'],
+    columns: ['name', 'business_type', 'category', 'brand', 'type', 'unit', 'notes'],
+    fields: [['name', 'Name', 'text', true], ['business_type', 'Business Type', 'select', true, SHOP_TYPES], ['category', 'Category'], ['brand', 'Brand'], ['type', 'Type'], ['unit', 'Unit'], ['notes', 'Notes']],
+    defaultRecord: ({ brand }) => ({ business_type: brand?.business_type || 'General Store', unit: 'pcs' }),
+  },
   settings: {
     title: 'Admin Panel Settings',
     store: 'settings',
@@ -169,6 +179,51 @@ const RESOURCES = {
     columns: ['key', 'value'],
     fields: [['key', 'Setting Name', 'text', true], ['value', 'Value', 'text', true]],
   },
+};
+
+const CATALOG_PRESETS = {
+  'Pharmacy': [
+    ['Paracetamol 500mg', 'Medicine', 'Tablet'], ['Ibuprofen 400mg', 'Medicine', 'Tablet'], ['Amoxicillin 500mg', 'Medicine', 'Capsule'], ['Azithromycin 500mg', 'Medicine', 'Tablet'],
+    ['Cefixime 400mg', 'Medicine', 'Tablet'], ['Cetirizine 10mg', 'Medicine', 'Tablet'], ['Loratadine 10mg', 'Medicine', 'Tablet'], ['Omeprazole 20mg', 'Medicine', 'Capsule'],
+    ['Pantoprazole 40mg', 'Medicine', 'Tablet'], ['Metformin 500mg', 'Medicine', 'Tablet'], ['Glimepiride 2mg', 'Medicine', 'Tablet'], ['Amlodipine 5mg', 'Medicine', 'Tablet'],
+    ['Losartan 50mg', 'Medicine', 'Tablet'], ['Atorvastatin 20mg', 'Medicine', 'Tablet'], ['Montelukast 10mg', 'Medicine', 'Tablet'], ['Salbutamol Syrup', 'Medicine', 'Syrup'],
+    ['ORS Sachet', 'Medicine', 'Sachet'], ['Vitamin C 500mg', 'Supplement', 'Tablet'], ['Calcium + Vitamin D', 'Supplement', 'Tablet'], ['Blood Pressure Monitor', 'Healthcare', 'Device'],
+    ['Glucometer Strips', 'Healthcare', 'Pack'], ['Digital Thermometer', 'Healthcare', 'Device'], ['Face Mask', 'Healthcare', 'Box'], ['Hand Sanitizer', 'Personal Care', 'Bottle'],
+  ],
+  'Hospital': [
+    ['Paracetamol 500mg', 'Medicine', 'Tablet'], ['Ceftriaxone Injection', 'Medicine', 'Injection'], ['Normal Saline 1000ml', 'Medicine', 'Bottle'], ['Dextrose 5% 500ml', 'Medicine', 'Bottle'],
+    ['Disposable Syringe 5ml', 'Lab Supplies', 'Pcs'], ['Disposable Syringe 10ml', 'Lab Supplies', 'Pcs'], ['IV Cannula 22G', 'Lab Supplies', 'Pcs'], ['Cotton Roll', 'Healthcare', 'Roll'],
+    ['Surgical Gloves', 'Healthcare', 'Box'], ['Bandage Roll', 'Healthcare', 'Roll'], ['ORS Sachet', 'Medicine', 'Sachet'], ['Antiseptic Solution', 'Healthcare', 'Bottle'],
+  ],
+  'Mobile Shop': [
+    ['iPhone 15 Pro Max', 'Mobile Phones', 'Apple'], ['iPhone 15', 'Mobile Phones', 'Apple'], ['Samsung Galaxy S24 Ultra', 'Mobile Phones', 'Samsung'], ['Samsung Galaxy A15', 'Mobile Phones', 'Samsung'],
+    ['Infinix Hot 40', 'Mobile Phones', 'Infinix'], ['Tecno Spark 20', 'Mobile Phones', 'Tecno'], ['Vivo Y27', 'Mobile Phones', 'Vivo'], ['Oppo A78', 'Mobile Phones', 'Oppo'],
+    ['Redmi Note 13', 'Mobile Phones', 'Xiaomi'], ['Realme C67', 'Mobile Phones', 'Realme'], ['USB-C Cable', 'Accessories', 'Generic'], ['Fast Charger 25W', 'Accessories', 'Generic'],
+    ['Power Bank 10000mAh', 'Accessories', 'Generic'], ['Bluetooth Handsfree', 'Accessories', 'Generic'], ['Tempered Glass', 'Accessories', 'Generic'], ['Back Cover', 'Accessories', 'Generic'],
+    ['SIM Jacket', 'Accessories', 'Generic'], ['Memory Card 64GB', 'Accessories', 'Generic'], ['AirPods Case', 'Accessories', 'Apple'], ['Mobile Battery', 'Spare Parts', 'Generic'],
+  ],
+  'Grocery Store': [
+    ['Sugar 1kg', 'Grocery', 'General'], ['Rice 5kg', 'Grocery', 'General'], ['Wheat Flour 10kg', 'Grocery', 'General'], ['Cooking Oil 1L', 'Grocery', 'General'],
+    ['Tea 190g', 'Grocery', 'General'], ['Milk Pack 1L', 'Beverages', 'General'], ['Biscuit Pack', 'Grocery', 'General'], ['Noodles Pack', 'Grocery', 'General'],
+    ['Soap', 'Household', 'General'], ['Detergent Powder', 'Household', 'General'], ['Toothpaste', 'Personal Care', 'General'], ['Shampoo', 'Personal Care', 'General'],
+  ],
+  'General Store': [
+    ['Sugar 1kg', 'Grocery', 'General'], ['Rice 1kg', 'Grocery', 'General'], ['Cooking Oil 1L', 'Grocery', 'General'], ['Tea Pack', 'Grocery', 'General'],
+    ['Biscuit Pack', 'Grocery', 'General'], ['Cold Drink 1.5L', 'Beverages', 'General'], ['Soap', 'Household', 'General'], ['Battery Cell', 'General', 'Generic'],
+    ['Notebook', 'General', 'Generic'], ['Pen', 'General', 'Generic'], ['Tissue Box', 'Household', 'General'], ['Match Box', 'General', 'Generic'],
+  ],
+  'Electronics Store': [
+    ['LED Bulb 12W', 'Electronics', 'Generic'], ['Extension Lead', 'Electronics', 'Generic'], ['HDMI Cable', 'Accessories', 'Generic'], ['Remote Control', 'Accessories', 'Generic'],
+  ],
+  'Clothing Store': [
+    ['Men Shirt', 'Clothing', 'Generic'], ['Ladies Suit', 'Clothing', 'Generic'], ['Kids T-Shirt', 'Clothing', 'Generic'], ['Socks Pair', 'Accessories', 'Generic'],
+  ],
+  'Hardware Store': [
+    ['Screw Driver', 'Tools', 'Generic'], ['Pliers', 'Tools', 'Generic'], ['PVC Pipe', 'Plumbing', 'Generic'], ['Electric Wire Roll', 'Electrical', 'Generic'],
+  ],
+  'Shopping Mall': [
+    ['Grocery Item', 'Grocery', 'General'], ['Electronics Item', 'Electronics', 'Generic'], ['Clothing Item', 'Clothing', 'Generic'], ['Household Item', 'Household', 'Generic'],
+  ],
 };
 
 const ADMIN_USER = true;
@@ -181,6 +236,7 @@ const MODULE_LABELS = {
   'User Management': 'User',
   'Patient Management': 'Patient',
   'Assistant Management': 'Assistant',
+  'Master Catalog': 'Catalog Item',
   'Sales Record': 'Sale',
   'Manual Repair Receipt': 'Repair Receipt',
   'Admin Panel Settings': 'Admin Setting',
@@ -265,7 +321,7 @@ function App() {
 
   async function refresh() {
     await cleanupStartupData();
-    const stores = ['products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items', 'expenses', 'repairs', 'repair_updates', 'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'payments', 'cashbook', 'users', 'settings', 'notifications', 'licenses', 'audit_logs', 'inventory_transactions', 'customer_ledgers', 'supplier_ledgers', 'sync_queue'];
+    const stores = ['products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items', 'expenses', 'repairs', 'repair_updates', 'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'master_catalogs', 'payments', 'cashbook', 'users', 'settings', 'notifications', 'licenses', 'audit_logs', 'inventory_transactions', 'customer_ledgers', 'supplier_ledgers', 'sync_queue'];
     const entries = await Promise.all(stores.map(async (store) => [store, await listRecords(store)]));
     setData(Object.fromEntries(entries));
     setSnapshot(await dashboardSnapshot());
@@ -374,6 +430,8 @@ function App() {
           {active === 'notifications' && <Notifications data={data} refresh={refresh} />}
           {active === 'accounting' && <Accounting data={data} refresh={refresh} />}
           {active === 'reports' && <Reports refreshKey={refreshKey} />}
+          {active === 'catalog' && <CatalogModule rows={data.master_catalogs || []} products={data.products || []} brand={brand} refresh={refresh} />}
+          {active === 'backup' && <BackupModule refresh={refresh} />}
           {active === 'users' && <CrudModule config={RESOURCES.users} rows={data.users || []} refresh={refresh} />}
           {active === 'patients' && <CrudModule config={RESOURCES.patients} rows={patientRowsForUser(data.patients || [], auth, brand)} refresh={refresh} context={{ auth, brand }} />}
           {active === 'assistants' && <CrudModule config={RESOURCES.assistants} rows={assistantRowsForUser(data.assistants || [], auth, brand)} refresh={refresh} context={{ auth, brand }} />}
@@ -562,6 +620,99 @@ function CrudModule({ config, rows, refresh, extraActions, context = {} }) {
     notify('Import completed successfully');
   }
   return <div className="stack"><section className="panel"><ModuleHeader title={config.title} query={query} setQuery={setQuery} onAdd={() => setEditing(blankRecord())} onImport={() => importRef.current?.click()} onExport={() => exportCsv(`${config.store}.csv`, filtered)} onPrint={() => printTable(config.title, filtered, config.columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={config.columns} onAdd={() => setEditing(blankRecord())} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button>{extraActions?.(row)}</>} /></section>{viewing && <DetailModal title={`${config.title} Detail`} row={viewing} columns={config.columns} onClose={() => setViewing(null)} />}{editing && <RecordModal title={config.title} fields={config.fields} record={editing} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store={config.store} onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+}
+
+function CatalogModule({ rows, products, brand, refresh }) {
+  const [query, setQuery] = useState('');
+  const [editing, setEditing] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+  const [viewing, setViewing] = useState(null);
+  const importRef = useRef(null);
+  const config = RESOURCES.master_catalogs;
+  const scoped = useMemo(() => catalogRowsForBusiness(rows, brand), [rows, brand]);
+  const filtered = useMemo(() => filterRows(scoped, query, config.search), [scoped, query]);
+  const importedCount = rows.length;
+  const presetCount = (CATALOG_PRESETS[brand?.business_type || 'General Store'] || CATALOG_PRESETS['General Store']).length;
+  const blank = () => config.defaultRecord({ brand });
+
+  async function submit(record) {
+    const saved = await saveRecord('master_catalogs', record);
+    runInBackground(() => saveRemoteRecord('master_catalogs', saved), 'Catalog synced in background');
+    setEditing(null);
+    await refresh();
+    notify('Catalog item saved successfully');
+  }
+
+  async function remove(row, mode) {
+    await deleteEverywhere('master_catalogs', row, mode);
+    setDeleting(null);
+    await refresh();
+    notify('Catalog item deleted successfully');
+  }
+
+  async function importFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const count = await importMasterCatalogCsv(file);
+    event.target.value = '';
+    await refresh();
+    notify(`${count} catalog names imported successfully`);
+  }
+
+  async function seedPresets() {
+    const businessType = brand?.business_type || 'General Store';
+    const existing = new Set(rows.map((row) => `${String(row.business_type || '').toLowerCase()}|${String(row.name || '').toLowerCase()}`));
+    const source = CATALOG_PRESETS[businessType] || CATALOG_PRESETS['General Store'];
+    let count = 0;
+    for (const [name, category, itemBrand] of source) {
+      const key = `${businessType.toLowerCase()}|${name.toLowerCase()}`;
+      if (existing.has(key)) continue;
+      await saveRecord('master_catalogs', { name, business_type: businessType, category, brand: itemBrand, type: category, unit: 'pcs', notes: 'Built-in starter catalog' });
+      count += 1;
+    }
+    await refresh();
+    notify(count ? `${count} starter catalog items added` : 'Starter catalog already exists');
+  }
+
+  async function addToInventory(row) {
+    const exists = products.some((product) => String(product.product_name || '').toLowerCase() === String(row.name || '').toLowerCase());
+    if (exists) return notify('This item already exists in inventory');
+    const product = await saveRecord('products', calculatedProduct({
+      product_name: row.name,
+      category: row.category || categoriesForBusiness(brand)[0],
+      brand: row.brand || '',
+      unit: row.unit || 'pcs',
+      package_quantity: 0,
+      units_per_package: 1,
+      loose_quantity: 0,
+      quantity: 0,
+      purchase_price: 0,
+      sale_price: 0,
+      low_stock_threshold: 3,
+    }));
+    runInBackground(() => saveRemoteRecord('products', product), 'Inventory synced in background');
+    await refresh();
+    notify('Catalog item added to inventory');
+  }
+
+  return <div className="stack"><section className="panel"><ModuleHeader title="Master Catalog" query={query} setQuery={setQuery} onAdd={() => setEditing(blank())} onImport={() => importRef.current?.click()} onExport={() => exportCsv('master-catalog.csv', filtered)} onPrint={() => printTable('Master Catalog', filtered, config.columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><div className="module-actions report-actions"><button className="ghost-btn" onClick={seedPresets}><Plus size={16} /> Add Starter Catalog</button><button className="ghost-btn" onClick={downloadCatalogTemplate}><Download size={16} /> CSV Template</button><span className="shortcut-pill">{brand?.business_type || 'General Store'} catalog: {filtered.length} shown / {importedCount} total / {presetCount} starter</span></div><DataTable rows={filtered} columns={config.columns} onAdd={() => setEditing(blank())} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => addToInventory(row)}><Boxes size={15} /> Inventory</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Catalog Detail" row={viewing} columns={config.columns} onClose={() => setViewing(null)} />}{editing && <RecordModal title="Master Catalog" fields={config.fields} record={editing} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store="master_catalogs" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+}
+
+function BackupModule({ refresh }) {
+  const restoreRef = useRef(null);
+  async function restore(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const count = await importBackupFile(file);
+      event.target.value = '';
+      await refresh();
+      notify(`${count} backup records restored successfully`);
+    } catch (error) {
+      notify(error.message || 'Backup restore failed');
+    }
+  }
+  return <div className="stack"><section className="panel"><div className="module-head"><h2>Backup & Restore</h2><div className="module-actions"><button className="primary-btn" onClick={() => exportBackupFile(`msm-backup-${new Date().toISOString().slice(0, 10)}.json`)}><Download size={16} /> Download Full Backup</button><button className="ghost-btn" onClick={() => restoreRef.current?.click()}><Upload size={16} /> Restore Backup</button></div></div><input ref={restoreRef} className="hidden-input" type="file" accept=".json" onChange={restore} /><div className="dashboard-empty"><Download size={34} /><strong>Complete business backup</strong><p>Backup includes inventory, sales, customers, patients, catalog, licenses, settings, audit logs and offline sync queue.</p></div></section><section className="panel"><h2>Catalog Bulk Import</h2><p className="muted">For 60,000 medicines/products/mobile models, use the CSV template and import it from Master Catalog. New items can still be added manually any time.</p><div className="button-row"><button className="ghost-btn" onClick={downloadCatalogTemplate}><Download size={16} /> Download Catalog CSV Template</button></div></section></div>;
 }
 
 function Inventory({ rows, brand, refresh }) {
@@ -1054,6 +1205,23 @@ function filterRows(rows, query, keys) {
   const value = query.trim().toLowerCase();
   if (!value) return rows;
   return rows.filter((row) => keys.some((key) => String(row[key] || '').toLowerCase().includes(value)));
+}
+
+function catalogRowsForBusiness(rows, brand) {
+  const type = brand?.business_type || 'General Store';
+  const allowed = new Set([type, 'All']);
+  if (type === 'General Store') allowed.add('Grocery Store');
+  if (type === 'Grocery Store') allowed.add('General Store');
+  if (type === 'Hospital') allowed.add('Pharmacy');
+  return rows.filter((row) => allowed.has(row.business_type || 'All'));
+}
+
+function downloadCatalogTemplate() {
+  exportCsv('master-catalog-template.csv', [
+    { name: 'Paracetamol 500mg', business_type: 'Pharmacy', category: 'Medicine', brand: 'Generic', type: 'Tablet', unit: 'pcs', notes: 'Sample row' },
+    { name: 'iPhone 15 Pro Max', business_type: 'Mobile Shop', category: 'Mobile Phones', brand: 'Apple', type: 'Model', unit: 'pcs', notes: 'Sample row' },
+    { name: 'Sugar 1kg', business_type: 'Grocery Store', category: 'Grocery', brand: 'General', type: 'Pack', unit: 'kg', notes: 'Sample row' },
+  ]);
 }
 
 function money(value) {
