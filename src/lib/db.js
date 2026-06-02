@@ -119,6 +119,7 @@ export async function saveRemoteRecord(resource, data, options = {}) {
   const token = localStorage.getItem('dsh_token') || '';
   const uuid = data.uuid;
   const forceCreate = options.forceCreate || false;
+  const payloadData = remotePayload(data);
   const response = await fetch(`${API_URL}/${resource}${uuid && !forceCreate ? `/${uuid}` : ''}`, {
     method: uuid && !forceCreate ? 'PUT' : 'POST',
     headers: {
@@ -126,13 +127,18 @@ export async function saveRemoteRecord(resource, data, options = {}) {
       Accept: 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify(data),
+    body: JSON.stringify(payloadData),
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Remote save failed.';
     throw new Error(detail);
   }
+  return payload;
+}
+
+function remotePayload(data) {
+  const { id, created_at, updated_at, deleted_at, sync_status, ...payload } = data;
   return payload;
 }
 
