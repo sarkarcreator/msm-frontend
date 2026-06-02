@@ -1,6 +1,9 @@
 node_modules/
 dist/
 vendor/
+backend/
+docs/
+README.md
 .env
 .env.*
 !.env.example
