@@ -80,7 +80,7 @@ const RESOURCES = {
     title: 'Inventory Management',
     store: 'products',
     search: ['product_name', 'category', 'brand', 'model', 'sku', 'imei', 'barcode', 'batch_number', 'status'],
-    columns: ['product_name', 'category', 'brand', 'unit', 'barcode', 'batch_number', 'expiry_date', 'purchase_price', 'sale_price', 'quantity', 'status'],
+    columns: ['product_name', 'category', 'brand', 'unit', 'package_quantity', 'units_per_package', 'quantity', 'purchase_price', 'package_cost_price', 'total_cost', 'sale_price', 'low_stock_threshold', 'status'],
     rowMap: inventoryRows,
     fields: [
       ['product_name', 'Product Name', 'text', true], ['category', 'Category', 'select', true, ['General', 'Grocery', 'Pharmacy', 'Electronics', 'Clothing', 'Hardware', 'Accessories', 'Spare Parts']], ['brand', 'Brand'], ['model', 'Model'],
@@ -167,11 +167,16 @@ const HEADER_LABELS = {
   imei: 'IMEI / Serial',
   sku: 'SKU',
   unit: 'Unit',
+  package_quantity: 'Boxes / Packs',
+  units_per_package: 'Pcs Per Box',
+  loose_quantity: 'Loose Pcs',
+  package_cost_price: 'Cost Per Box',
+  total_cost: 'Total Cost',
   batch_number: 'Batch',
   expiry_date: 'Expiry',
   manufacturer: 'Manufacturer',
-  purchase_price: 'Cost Price',
-  sale_price: 'Sale Price',
+  purchase_price: 'Cost / Pc',
+  sale_price: 'Sale / Pc',
   quantity: 'Stock',
   low_stock_threshold: 'Low Stock Limit',
   total_spent: 'Total Spent',
@@ -460,11 +465,24 @@ function Inventory({ rows, brand, refresh }) {
   const columns = RESOURCES.products.columns;
   const categoryOptions = categoriesForBusiness(brand);
   const filtered = useMemo(() => filterRows(inventoryRows(rows), query, RESOURCES.products.search), [rows, query]);
-  const blank = { category: categoryOptions[0], unit: 'pcs', quantity: 0, low_stock_threshold: 3, purchase_price: 0, sale_price: 0 };
+  const blank = {
+    category: categoryOptions[0],
+    unit: 'pcs',
+    package_quantity: 0,
+    units_per_package: 1,
+    loose_quantity: 0,
+    quantity: 0,
+    low_stock_threshold: 3,
+    purchase_price: 0,
+    sale_price: 0,
+    package_cost_price: 0,
+    total_cost: 0,
+  };
 
   async function submit(event) {
     event.preventDefault();
-    await saveRecord('products', editing);
+    const product = await saveRecord('products', calculatedProduct(editing));
+    await saveRemoteRecord('products', product);
     setEditing(null);
     await refresh();
     notify('Product saved successfully');
@@ -487,10 +505,34 @@ function Inventory({ rows, brand, refresh }) {
   }
 
   function change(key, value) {
-    setEditing((current) => ({ ...current, [key]: value }));
+    setEditing((current) => calculatedProduct({ ...current, [key]: value }));
   }
 
-  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Product Detail" row={viewing} columns={columns} onClose={() => setViewing(null)} />}{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={editing.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={editing.category || categoryOptions[0]} onChange={(event) => change('category', event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={editing.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label><label>SKU<input value={editing.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Barcode<input value={editing.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Unit<select value={editing.unit || 'pcs'} onChange={(event) => change('unit', event.target.value)}>{['pcs', 'kg', 'gram', 'liter', 'meter', 'box', 'pack'].map((item) => <option key={item}>{item}</option>)}</select></label><label>Batch Number<input value={editing.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label><label>Expiry Date<input type="date" value={editing.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label><label>IMEI / Serial<input value={editing.imei || ''} onChange={(event) => change('imei', event.target.value)} /></label><label>Manufacturer<input value={editing.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label><label>Cost Price<input type="number" value={editing.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label><label>Sale Price<input type="number" value={editing.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Stock<input type="number" value={editing.quantity || 0} onChange={(event) => change('quantity', event.target.value)} /></label><label>Low Stock Warning<input type="number" value={editing.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label><label>Warranty<input value={editing.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label><label>Supplier<input value={editing.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  const edit = calculatedProduct(editing || blank);
+  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(calculatedProduct(row))}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Product Detail" row={viewing} columns={[...columns, 'barcode', 'sku', 'batch_number', 'expiry_date', 'imei', 'manufacturer', 'warranty', 'supplier_name']} onClose={() => setViewing(null)} />}{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={edit.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={edit.category || categoryOptions[0]} onChange={(event) => change('category', event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={edit.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label><label>SKU<input value={edit.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Barcode<input value={edit.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Unit<select value={edit.unit || 'pcs'} onChange={(event) => change('unit', event.target.value)}>{['pcs', 'box', 'pack', 'carton', 'strip', 'bottle', 'kg', 'gram', 'liter', 'meter'].map((item) => <option key={item}>{item}</option>)}</select></label><label>Boxes / Packs Qty<input type="number" min="0" value={edit.package_quantity || 0} onChange={(event) => change('package_quantity', event.target.value)} /></label><label>Pcs Per Box / Pack<input type="number" min="1" value={edit.units_per_package || 1} onChange={(event) => change('units_per_package', event.target.value)} /></label><label>Loose Pcs<input type="number" min="0" value={edit.loose_quantity || 0} onChange={(event) => change('loose_quantity', event.target.value)} /></label><label>Total Stock Pcs<input type="number" readOnly value={edit.quantity || 0} /></label><label>Cost Per Pc<input type="number" min="0" step="0.01" value={edit.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label><label>Cost Per Box / Pack<input type="number" readOnly value={edit.package_cost_price || 0} /></label><label>Total Cost<input type="number" readOnly value={edit.total_cost || 0} /></label><label>Sale Price Per Pc<input type="number" min="0" step="0.01" value={edit.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Low Stock Warning<input type="number" min="0" value={edit.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label><label>Batch Number<input value={edit.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label><label>Expiry Date<input type="date" value={edit.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label><label>IMEI / Serial<input value={edit.imei || ''} onChange={(event) => change('imei', event.target.value)} /></label><label>Manufacturer<input value={edit.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label><label>Warranty<input value={edit.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label><label>Supplier<input value={edit.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div><div className="totals inventory-total"><span>Total Stock: <strong>{edit.quantity || 0} pcs</strong></span><span>Per Box Cost: <strong>{money(edit.package_cost_price)}</strong></span><span>Total Cost: <strong>{money(edit.total_cost)}</strong></span></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+}
+
+function calculatedProduct(record) {
+  if (!record) return record;
+  const packageQuantity = Number(record.package_quantity || 0);
+  const unitsPerPackage = Math.max(1, Number(record.units_per_package || 1));
+  const looseQuantity = Number(record.loose_quantity || 0);
+  const purchasePrice = Number(record.purchase_price || record.unit_cost_price || 0);
+  const salePrice = Number(record.sale_price || record.unit_sale_price || 0);
+  const quantity = packageQuantity * unitsPerPackage + looseQuantity;
+  return {
+    ...record,
+    unit_cost_price: purchasePrice,
+    unit_sale_price: salePrice,
+    package_quantity: packageQuantity,
+    units_per_package: unitsPerPackage,
+    loose_quantity: looseQuantity,
+    quantity,
+    purchase_price: purchasePrice,
+    sale_price: salePrice,
+    package_cost_price: purchasePrice * unitsPerPackage,
+    total_cost: purchasePrice * quantity,
+  };
 }
 
 function DeleteDialog({ row, store, onClose, onDelete }) {
@@ -906,7 +948,7 @@ function money(value) {
 
 function format(value, key) {
   if (key === 'status') return <span className={`status-tag ${statusClass(value)}`}>{String(value ?? '')}</span>;
-  if (['purchase_price', 'sale_price', 'cost_price', 'amount', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent'].includes(key)) return money(value);
+  if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent'].includes(key)) return money(value);
   if (String(key).includes('_at') && value) return new Date(value).toLocaleString();
   return String(value ?? '');
 }
@@ -928,7 +970,7 @@ function printTable(title, rows, columns) {
 }
 
 function printableFormat(value, key) {
-  if (['purchase_price', 'sale_price', 'cost_price', 'amount', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent'].includes(key)) return money(value);
+  if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent'].includes(key)) return money(value);
   if (String(key).includes('_at') && value) return new Date(value).toLocaleString();
   return String(value ?? '');
 }

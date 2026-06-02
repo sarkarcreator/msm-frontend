@@ -71,12 +71,16 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .form-grid.single { @apply sm:grid-cols-2; }
 .form-grid label { @apply grid gap-1 text-sm font-bold text-black/60 dark:text-white/60; }
 .form-grid input, .form-grid select, .inline-form input, .inline-form select { @apply h-10 min-w-0 rounded-2xl border border-black/10 bg-white px-3 text-ink outline-none focus:border-mint dark:border-white/10 dark:bg-black/20 dark:text-white; }
+.form-grid input[readonly] { @apply bg-black/[0.035] font-black text-black/70 dark:bg-white/10 dark:text-white/80; }
 .form-grid label:last-child:nth-child(odd) { @apply sm:col-span-2; }
 .span-2 { @apply sm:col-span-2; }
 .inline-form { @apply my-4 grid min-w-0 gap-3 sm:grid-cols-2; }
 .inline-form button { @apply sm:col-span-2; }
 .totals { @apply my-4 flex items-center justify-between rounded border border-black/10 bg-paper p-3 dark:border-white/10 dark:bg-black/20; }
 .totals strong { @apply text-xl; }
+.inventory-total { @apply flex-wrap gap-3; }
+.inventory-total span { @apply rounded bg-white/70 px-3 py-2 text-sm font-bold text-black/60 dark:bg-white/5 dark:text-white/60; }
+.inventory-total strong { @apply text-base text-ink dark:text-white; }
 
 .product-picker { @apply mt-4 grid gap-3 sm:grid-cols-2; }
 .product-picker button { @apply grid gap-1 rounded-2xl border border-black/10 bg-paper/80 p-3 text-left transition hover:-translate-y-1 hover:shadow-lg dark:border-white/10 dark:bg-black/20; }

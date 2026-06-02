@@ -11,7 +11,8 @@ export const STORE_NAMES = [
 ];
 
 const MONEY_FIELDS = new Set([
-  'purchase_price', 'sale_price', 'cost_price', 'amount', 'charges', 'subtotal',
+  'purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price',
+  'package_cost_price', 'total_cost', 'amount', 'charges', 'subtotal',
   'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit',
   'repair_charges', 'advance_payment', 'remaining_amount',
 ]);
@@ -751,7 +752,8 @@ async function supplierName(uuid) {
 }
 
 function normalizeNumbers(data) {
-  return Object.fromEntries(Object.entries(data).map(([key, value]) => [key, MONEY_FIELDS.has(key) || key === 'quantity' ? Number(value || 0) : value]));
+  const numberFields = new Set(['quantity', 'package_quantity', 'units_per_package', 'loose_quantity', 'low_stock_threshold']);
+  return Object.fromEntries(Object.entries(data).map(([key, value]) => [key, MONEY_FIELDS.has(key) || numberFields.has(key) ? Number(value || 0) : value]));
 }
 
 function sum(rows, key) {
