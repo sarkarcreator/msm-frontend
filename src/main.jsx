@@ -280,6 +280,11 @@ const HEADER_LABELS = {
   advance_payment: 'Advance',
   remaining_amount: 'Remaining',
   provider: 'Provider',
+  available: 'Available',
+  cash_in: 'Cash In',
+  sent: 'Sent',
+  pending: 'Pending',
+  fee_profit: 'Fee Profit',
   reference_number: 'Transaction ID',
   transacted_at: 'Date',
   patient_name: 'Patient',
@@ -426,7 +431,7 @@ function App() {
           {active === 'catalog' && <CatalogModule rows={data.master_catalogs || []} products={data.products || []} brand={brand} refresh={refresh} />}
           {active === 'backup' && <BackupModule data={data} auth={auth} brand={brand} refresh={refresh} />}
           {active === 'users' && <CrudModule config={RESOURCES.users} rows={data.users || []} refresh={refresh} />}
-          {active === 'patients' && <CrudModule config={RESOURCES.patients} rows={patientRowsForUser(data.patients || [], auth, brand)} refresh={refresh} context={{ auth, brand }} />}
+          {active === 'patients' && <CrudModule config={RESOURCES.patients} rows={patientRowsForUser(data.patients || [], auth, brand)} refresh={refresh} context={{ auth, brand, assistants: assistantRowsForUser(data.assistants || [], auth, brand), catalogs: data.master_catalogs || [] }} />}
           {active === 'assistants' && <CrudModule config={RESOURCES.assistants} rows={assistantRowsForUser(data.assistants || [], auth, brand)} refresh={refresh} context={{ auth, brand }} />}
           {active === 'licenses' && <LicenseManager rows={data.licenses || []} refresh={refresh} />}
           {active === 'settings' && <SettingsPanel brand={brand} rows={data.settings || []} refresh={refresh} />}
@@ -515,9 +520,10 @@ function Dashboard({ snapshot, data, brand, auth, refresh }) {
   const sales = data.sales || [];
   const customers = data.customers || [];
   const products = data.products || [];
+  const wallets = data.mobile_wallet_transactions || [];
   const pendingRepairs = [...(data.repairs || []), ...(data.manual_repair_receipts || [])].filter((row) => !['Delivered', 'Completed'].includes(row.status));
   const max = Math.max(...sales.slice(0, 8).map((sale) => Number(sale.total)), 1);
-  return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? (value || 'No Data Available') : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><section className="panel"><div className="module-head"><h2>Sales Performance</h2><span className="shortcut-pill"><BarChart3 size={15} /> Last {Math.min(sales.length, 8)} invoices</span></div>{sales.length ? <SalesChart sales={sales} max={max} /> : <DashboardEmpty icon={BarChart3} title="No Sales Data Available" description="Start creating sales to see analytics." />}</section><section className="split"><DashboardTable title="Top Customers" rows={snapshot?.topCustomers || []} cols={['name', 'phone', 'total_spent', 'balance']} emptyIcon={Users} emptyTitle={customers.length ? 'No Spending History Available' : 'No Customer Data Available'} emptyDescription={customers.length ? 'Customer spend totals will appear after sales are recorded.' : 'Create customers or complete sales to build this leaderboard.'} /><DashboardTable title="Low Stock Alerts" rows={snapshot?.lowStock || []} cols={['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={products.length ? 'All Stock Levels Healthy' : 'No Inventory Data Available'} emptyDescription={products.length ? 'Products below their low stock threshold will appear here.' : 'Add inventory or receive stock from Purchases to enable alerts.'} /></section><section className="split"><DashboardTable title="Recent Sales" rows={snapshot?.recentSales || []} cols={['invoice_number', 'customer_name', 'total', 'paid', 'balance']} emptyIcon={ReceiptText} emptyTitle="No Recent Sales Available" emptyDescription="Completed invoices will appear here automatically." /><DashboardTable title="Pending Repairs" rows={pendingRepairs} cols={['job_number', 'receipt_number', 'customer_name', 'device_name', 'status']} emptyIcon={Wrench} emptyTitle="No Pending Repairs" emptyDescription="Open repair jobs and manual repair receipts will appear here." /></section></div>;
+  return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? (value || 'No Data Available') : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div>{brand?.business_type === 'Mobile Shop' && <WalletDashboard wallets={wallets} />}<section className="panel"><div className="module-head"><h2>Sales Performance</h2><span className="shortcut-pill"><BarChart3 size={15} /> Last {Math.min(sales.length, 8)} invoices</span></div>{sales.length ? <SalesChart sales={sales} max={max} /> : <DashboardEmpty icon={BarChart3} title="No Sales Data Available" description="Start creating sales to see analytics." />}</section><section className="split"><DashboardTable title="Top Customers" rows={snapshot?.topCustomers || []} cols={['name', 'phone', 'total_spent', 'balance']} emptyIcon={Users} emptyTitle={customers.length ? 'No Spending History Available' : 'No Customer Data Available'} emptyDescription={customers.length ? 'Customer spend totals will appear after sales are recorded.' : 'Create customers or complete sales to build this leaderboard.'} /><DashboardTable title="Low Stock Alerts" rows={snapshot?.lowStock || []} cols={['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={products.length ? 'All Stock Levels Healthy' : 'No Inventory Data Available'} emptyDescription={products.length ? 'Products below their low stock threshold will appear here.' : 'Add inventory or receive stock from Purchases to enable alerts.'} /></section><section className="split"><DashboardTable title="Recent Sales" rows={snapshot?.recentSales || []} cols={['invoice_number', 'customer_name', 'total', 'paid', 'balance']} emptyIcon={ReceiptText} emptyTitle="No Recent Sales Available" emptyDescription="Completed invoices will appear here automatically." /><DashboardTable title="Pending Repairs" rows={pendingRepairs} cols={['job_number', 'receipt_number', 'customer_name', 'device_name', 'status']} emptyIcon={Wrench} emptyTitle="No Pending Repairs" emptyDescription="Open repair jobs and manual repair receipts will appear here." /></section></div>;
 }
 
 function HospitalDashboard({ data, auth, brand, refresh }) {
@@ -553,7 +559,7 @@ function HospitalDashboard({ data, auth, brand, refresh }) {
     await refresh();
     notify('Patient added successfully');
   }
-  return <div className="stack"><section className="panel"><div className="module-head"><div><h2>Patient Desk</h2><p className="muted">Doctor dashboard se patient details, diagnosis, medicine days aur next checkup add karein.</p></div><div className="module-actions"><button className="primary-btn" onClick={() => setEditingPatient(newPatient())}><Plus size={16} /> Add Patient</button></div></div><DataTable rows={todayPatients.slice(0, 5)} columns={['patient_name', 'phone', 'age', 'diagnosis', 'medicine', 'medicine_days', 'next_visit', 'status']} onAdd={() => setEditingPatient(newPatient())} actions={(row) => <button className="ghost-btn" onClick={() => setEditingPatient(row)}><Edit3 size={15} /> Edit</button>} /></section><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? value : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><section className="split"><DashboardTable title="Today's Patients" rows={todayPatients} cols={['patient_name', 'phone', 'age', 'diagnosis', 'medicine', 'medicine_days', 'next_visit', 'status', 'visit_date']} emptyIcon={Users} emptyTitle="No Patients Today" emptyDescription="Patients checked today will appear here." /><DashboardTable title="Follow Up Patients" rows={followUps} cols={['patient_name', 'phone', 'diagnosis', 'medicine', 'medicine_days', 'next_visit', 'status']} emptyIcon={Bell} emptyTitle="No Follow Ups" emptyDescription="Upcoming follow-up patients will appear here." /></section><section className="split"><DashboardTable title="Medicine / Prescription History" rows={medicines} cols={['patient_name', 'medicine', 'medicine_days', 'next_visit', 'diagnosis', 'visit_date']} emptyIcon={FileText} emptyTitle="No Medicine History" emptyDescription="Medicine prescribed to patients will appear here." /><DashboardTable title="Doctor Assistants" rows={assistants} cols={['name', 'phone', 'role', 'doctor_name', 'shift', 'status']} emptyIcon={Users} emptyTitle="No Assistants Added" emptyDescription="Add compounders or assistants for this doctor." /></section>{editingPatient && <RecordModal title="Patient Management" fields={RESOURCES.patients.fields} record={editingPatient} onClose={() => setEditingPatient(null)} onSubmit={submitPatient} />}</div>;
+  return <div className="stack"><section className="panel"><div className="module-head"><div><h2>Patient Desk</h2><p className="muted">Doctor dashboard se patient details, diagnosis, medicine days aur next checkup add karein.</p></div><div className="module-actions"><button className="primary-btn" onClick={() => setEditingPatient(newPatient())}><Plus size={16} /> Add Patient</button></div></div><DataTable rows={todayPatients.slice(0, 5)} columns={['patient_name', 'phone', 'age', 'diagnosis', 'medicine', 'medicine_days', 'next_visit', 'status']} onAdd={() => setEditingPatient(newPatient())} actions={(row) => <button className="ghost-btn" onClick={() => setEditingPatient(row)}><Edit3 size={15} /> Edit</button>} /></section><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? value : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><section className="split"><DashboardTable title="Today's Patients" rows={todayPatients} cols={['patient_name', 'phone', 'age', 'diagnosis', 'medicine', 'medicine_days', 'next_visit', 'status', 'visit_date']} emptyIcon={Users} emptyTitle="No Patients Today" emptyDescription="Patients checked today will appear here." /><DashboardTable title="Follow Up Patients" rows={followUps} cols={['patient_name', 'phone', 'diagnosis', 'medicine', 'medicine_days', 'next_visit', 'status']} emptyIcon={Bell} emptyTitle="No Follow Ups" emptyDescription="Upcoming follow-up patients will appear here." /></section><section className="split"><DashboardTable title="Medicine / Prescription History" rows={medicines} cols={['patient_name', 'medicine', 'medicine_days', 'next_visit', 'diagnosis', 'visit_date']} emptyIcon={FileText} emptyTitle="No Medicine History" emptyDescription="Medicine prescribed to patients will appear here." /><DashboardTable title="Doctor Assistants" rows={assistants} cols={['name', 'phone', 'role', 'doctor_name', 'shift', 'status']} emptyIcon={Users} emptyTitle="No Assistants Added" emptyDescription="Add compounders or assistants for this doctor." /></section>{editingPatient && <RecordModal title="Patient Management" fields={RESOURCES.patients.fields} record={editingPatient} context={{ auth, brand, assistants, catalogs: data.master_catalogs || [] }} onClose={() => setEditingPatient(null)} onSubmit={submitPatient} />}</div>;
 }
 
 function currentDoctorName(auth, brand) {
@@ -591,6 +597,24 @@ function DashboardEmpty({ icon: Icon, title, description }) {
   return <div className="dashboard-empty"><Icon size={30} /><strong>{title}</strong><p>{description}</p></div>;
 }
 
+function WalletDashboard({ wallets }) {
+  const rows = ['JazzCash', 'EasyPaisa'].map((provider) => {
+    const items = wallets.filter((row) => row.provider === provider && row.status !== 'Failed');
+    const cashIn = items.filter((row) => row.type === 'Cash In').reduce((sum, row) => sum + Number(row.amount || 0), 0);
+    const cashOut = items.filter((row) => row.type === 'Cash Out').reduce((sum, row) => sum + Number(row.amount || 0), 0);
+    const pending = items.filter((row) => row.status === 'Pending').reduce((sum, row) => sum + Number(row.amount || 0), 0);
+    const fee_profit = items.filter((row) => row.status === 'Completed').reduce((sum, row) => sum + Number(row.fee || 0), 0);
+    return { uuid: provider, provider, available: cashIn - cashOut, cash_in: cashIn, sent: cashOut, pending, fee_profit };
+  });
+  const totals = rows.reduce((acc, row) => ({
+    available: acc.available + row.available,
+    sent: acc.sent + row.sent,
+    pending: acc.pending + row.pending,
+    fee_profit: acc.fee_profit + row.fee_profit,
+  }), { available: 0, sent: 0, pending: 0, fee_profit: 0 });
+  return <section className="panel"><div className="module-head"><h2>EasyPaisa / JazzCash Wallets</h2><span className="shortcut-pill"><WalletCards size={15} /> Available {money(totals.available)}</span></div><div className="metric-grid"><div className="metric"><span>Total Available</span><strong>{money(totals.available)}</strong></div><div className="metric"><span>Total Sent</span><strong>{money(totals.sent)}</strong></div><div className="metric"><span>Pending Balance</span><strong>{money(totals.pending)}</strong></div><div className="metric"><span>Fee Profit</span><strong>{money(totals.fee_profit)}</strong></div></div><DataTable rows={rows} columns={['provider', 'available', 'cash_in', 'sent', 'pending', 'fee_profit']} /></section>;
+}
+
 function CrudModule({ config, rows, refresh, extraActions, context = {} }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
@@ -621,7 +645,7 @@ function CrudModule({ config, rows, refresh, extraActions, context = {} }) {
     await refresh();
     notify('Import completed successfully');
   }
-  return <div className="stack"><section className="panel"><ModuleHeader title={config.title} query={query} setQuery={setQuery} onAdd={() => setEditing(blankRecord())} onImport={() => importRef.current?.click()} onExport={() => exportCsv(`${config.store}.csv`, filtered)} onPrint={() => printTable(config.title, filtered, config.columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={config.columns} onAdd={() => setEditing(blankRecord())} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button>{extraActions?.(row)}</>} /></section>{viewing && <DetailModal title={`${config.title} Detail`} row={viewing} columns={config.columns} onClose={() => setViewing(null)} />}{editing && <RecordModal title={config.title} fields={config.fields} record={editing} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store={config.store} onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  return <div className="stack"><section className="panel"><ModuleHeader title={config.title} query={query} setQuery={setQuery} onAdd={() => setEditing(blankRecord())} onImport={() => importRef.current?.click()} onExport={() => exportCsv(`${config.store}.csv`, filtered)} onPrint={() => printTable(config.title, filtered, config.columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={config.columns} onAdd={() => setEditing(blankRecord())} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button>{extraActions?.(row)}</>} /></section>{viewing && <DetailModal title={`${config.title} Detail`} row={viewing} columns={config.columns} onClose={() => setViewing(null)} />}{editing && <RecordModal title={config.title} fields={config.fields} record={editing} context={context} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store={config.store} onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function CatalogModule({ rows, products, brand, refresh }) {
@@ -1201,11 +1225,22 @@ function List({ title, rows, cols }) {
   return <section className="panel"><h2>{title}</h2><DataTable rows={rows} columns={cols} /></section>;
 }
 
-function RecordModal({ title, fields, record, onSubmit, onClose }) {
+function RecordModal({ title, fields, record, onSubmit, onClose, context = {} }) {
   const [form, setForm] = useState(record);
   function change(key, value) { setForm({ ...form, [key]: value }); }
   const label = MODULE_LABELS[title] || title.replace(/Management|System/g, '').trim();
-  return <ModalShell onClose={onClose}><form onSubmit={(e) => { e.preventDefault(); onSubmit(form); }}><div className="modal-header"><h2>{record.uuid ? `Edit ${label}` : `Add ${label}`}</h2><button type="button" className="icon-btn" onClick={onClose} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid">{fields.map(([key, fieldLabel, type = 'text', required = false, options]) => <label key={key}>{fieldLabel}{type === 'select' ? <select required={required} value={form[key] || ''} onChange={(e) => change(key, e.target.value)}><option value="">Select</option>{options.map((option) => <option key={option}>{option}</option>)}</select> : <input required={required} type={type} value={form[key] || ''} onChange={(e) => change(key, e.target.value)} />}</label>)}</div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={onClose}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>;
+  const assistantOptions = assistantOptionsForPatient(context);
+  const medicineOptions = medicineOptionsForPatient(context);
+  return <ModalShell onClose={onClose}><form onSubmit={(e) => { e.preventDefault(); onSubmit(form); }}><div className="modal-header"><h2>{record.uuid ? `Edit ${label}` : `Add ${label}`}</h2><button type="button" className="icon-btn" onClick={onClose} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid">{fields.map(([key, fieldLabel, type = 'text', required = false, options]) => {
+    if (title === 'Patient Management' && key === 'assistant_name') {
+      return <label key={key}>{fieldLabel}<select value={form[key] || ''} onChange={(e) => change(key, e.target.value)}><option value="">Select assistant / compounder</option>{assistantOptions.map((option) => <option key={option}>{option}</option>)}</select></label>;
+    }
+    if (title === 'Patient Management' && key === 'medicine') {
+      const listId = `medicine-options-${record.uuid || 'new'}`;
+      return <label key={key}>{fieldLabel}<input required={required} list={listId} value={form[key] || ''} onChange={(e) => change(key, e.target.value)} placeholder="Medicine name likhein..." /><datalist id={listId}>{medicineOptions.map((option) => <option key={option} value={option} />)}</datalist></label>;
+    }
+    return <label key={key}>{fieldLabel}{type === 'select' ? <select required={required} value={form[key] || ''} onChange={(e) => change(key, e.target.value)}><option value="">Select</option>{options.map((option) => <option key={option}>{option}</option>)}</select> : <input required={required} type={type} value={form[key] || ''} onChange={(e) => change(key, e.target.value)} />}</label>;
+  })}</div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={onClose}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>;
 }
 
 function DetailModal({ title, row, columns, onClose }) {
@@ -1225,6 +1260,25 @@ function filterRows(rows, query, keys) {
   const value = query.trim().toLowerCase();
   if (!value) return rows;
   return rows.filter((row) => keys.some((key) => String(row[key] || '').toLowerCase().includes(value)));
+}
+
+function assistantOptionsForPatient(context = {}) {
+  const doctor = currentDoctorName(context.auth, context.brand).toLowerCase();
+  return [...new Set((context.assistants || [])
+    .filter((assistant) => !doctor || !assistant.doctor_name || String(assistant.doctor_name).toLowerCase() === doctor)
+    .filter((assistant) => assistant.status !== 'Disabled')
+    .map((assistant) => assistant.name)
+    .filter(Boolean))]
+    .sort();
+}
+
+function medicineOptionsForPatient(context = {}) {
+  const catalogs = catalogRowsForBusiness(context.catalogs || [], { business_type: 'Hospital' })
+    .filter((row) => ['medicine', 'healthcare', 'pharmacy', 'tablet', 'capsule', 'syrup', 'injection'].some((word) => `${row.category || ''} ${row.type || ''}`.toLowerCase().includes(word)))
+    .map((row) => row.name)
+    .filter(Boolean);
+  const fallback = [...(CATALOG_PRESETS.Hospital || []), ...(CATALOG_PRESETS.Pharmacy || [])].map(([name]) => name);
+  return [...new Set([...catalogs, ...fallback])].sort().slice(0, 60000);
 }
 
 function catalogRowsForBusiness(rows, brand) {
@@ -1277,7 +1331,7 @@ function money(value) {
 
 function format(value, key) {
   if (key === 'status') return <span className={`status-tag ${statusClass(value)}`}>{String(value ?? '')}</span>;
-  if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent'].includes(key)) return money(value);
+  if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent', 'available', 'cash_in', 'sent', 'pending', 'fee_profit'].includes(key)) return money(value);
   if (String(key).includes('_at') && value) return new Date(value).toLocaleString();
   if (['visit_date', 'next_visit', 'delivery_date', 'expiry_date', 'due_date'].includes(key) && value) return new Date(value).toLocaleDateString();
   return String(value ?? '');
@@ -1300,7 +1354,7 @@ function printTable(title, rows, columns) {
 }
 
 function printableFormat(value, key) {
-  if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent'].includes(key)) return money(value);
+  if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent', 'available', 'cash_in', 'sent', 'pending', 'fee_profit'].includes(key)) return money(value);
   if (String(key).includes('_at') && value) return new Date(value).toLocaleString();
   if (['visit_date', 'next_visit', 'delivery_date', 'expiry_date', 'due_date'].includes(key) && value) return new Date(value).toLocaleDateString();
   return String(value ?? '');
