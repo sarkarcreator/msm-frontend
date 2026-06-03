@@ -15,7 +15,7 @@ import {
   getBrandSettings, importBackupFile, importCsvRecords, importMasterCatalogCsv, listRecords, notificationCenter,
   importMedicinesFile, searchMedicines,
   printHtml, quickCustomer, receiptQrData, receiveCustomerPayment,
-  reportData, saveBrandSettings, saveRecord, saveRemoteRecord, saveUserAccount, syncNow, updateRepairStatus,
+  reportData, saveBrandSettings, saveRecord, saveRemoteRecord, saveUserAccount, syncNow, hydrateRemoteStores, updateRepairStatus,
   whatsAppShare, createManualRepairReceipt, saveHospitalPatientWorkflow,
 } from './lib/db.js';
 import './styles/app.css';
@@ -285,6 +285,11 @@ const DEFAULT_RECORDS = {
   'Assistant Management': () => ({ status: 'Active', role: 'Compounder' }),
 };
 
+const HOSPITAL_REMOTE_STORES = [
+  'patients', 'assistants', 'hospital_prescriptions', 'hospital_orders',
+  'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items',
+];
+
 const HEADER_LABELS = {
   product_name: 'Product Name',
   imei: 'IMEI / Serial',
@@ -355,6 +360,9 @@ function App() {
     await cleanupStartupData();
     await hydrateSessionSettings();
     if (auth.token && navigator.onLine) await syncNow();
+    if (auth.token && navigator.onLine && (brand?.business_type === 'Hospital' || localStorage.getItem('dsh_business_type') === 'Hospital')) {
+      await hydrateRemoteStores(HOSPITAL_REMOTE_STORES);
+    }
     const stores = ['products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items', 'expenses', 'repairs', 'repair_updates', 'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'medicines', 'payments', 'cashbook', 'users', 'settings', 'notifications', 'licenses', 'audit_logs', 'inventory_transactions', 'customer_ledgers', 'supplier_ledgers', 'sync_queue'];
     const entries = await Promise.all(stores.map(async (store) => [store, await listRecords(store)]));
     const currentBrand = await getBrandSettings();
@@ -689,14 +697,16 @@ function HospitalDashboard({ data, auth, brand, refresh }) {
     ['Active Assistants', assistants.filter((item) => item.status !== 'Disabled').length, false],
   ];
   const newPatient = () => RESOURCES.patients.defaultRecord({ auth, brand });
+  const canCreatePatient = !['Receptionist', 'Billing Officer'].includes(auth?.role || '');
   async function submitPatient(record) {
     const saved = await saveHospitalPatientWorkflow(record);
     await syncNow();
     setEditingPatient(null);
     await refresh();
+    printPatientTokenSlip(saved, brand);
     notify(`${saved.token_number || 'Token'} sent to reception`);
   }
-  return <div className="stack"><section className="panel"><div className="module-head"><div><h2>{hospitalFrontDeskRole(auth) ? 'Reception Desk' : 'Patient Desk'}</h2><p className="muted">Daily token queue, doctor recommendations, services and billing workflow.</p></div><div className="module-actions"><button className="primary-btn" onClick={() => setEditingPatient(newPatient())}><Plus size={16} /> Add Patient</button></div></div><DataTable rows={frontDeskRows.slice(0, 8)} columns={['token_number', 'mr_number', 'patient_name', 'phone', 'department', 'doctor_name', 'status']} onAdd={() => setEditingPatient(newPatient())} actions={(row) => <button className="ghost-btn" onClick={() => setEditingPatient(row)}><Edit3 size={15} /> Open File</button>} /></section><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? value : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><section className="split"><DashboardTable title={hospitalFrontDeskRole(auth) ? 'Today Reception Queue' : 'Doctor Treatment Status'} rows={frontDeskRows} cols={['token_number', 'mr_number', 'patient_name', 'visit_type', 'department', 'doctor_name', 'status']} emptyIcon={Users} emptyTitle="No Queue Available" emptyDescription="Doctor or assistant added patients will appear here." /><DashboardTable title="Follow Up Patients" rows={followUps} cols={['patient_name', 'phone', 'diagnosis', 'next_visit', 'status']} emptyIcon={Bell} emptyTitle="No Follow Ups" emptyDescription="Upcoming follow-up patients will appear here." /></section><section className="split"><DashboardTable title="Doctor Prescriptions" rows={data.hospital_prescriptions || []} cols={['token_number', 'patient_name', 'doctor_name', 'medicine_name', 'morning', 'afternoon', 'evening', 'night', 'days', 'status']} emptyIcon={Boxes} emptyTitle="No Pharmacy Tasks" emptyDescription="Doctor prescriptions will appear here." /><DashboardTable title="Doctor Recommended Tests / Services" rows={[...(data.hospital_tasks || []), ...pendingLab, ...pendingRadiology]} cols={['token_number', 'patient_name', 'task_name', 'test_name', 'study_type', 'status']} emptyIcon={FileText} emptyTitle="No Recommended Services" emptyDescription="Injection, X-Ray, lab and other recommendations will appear here." /></section><section className="split"><DashboardTable title="Medicine / Prescription History" rows={medicines} cols={['patient_name', 'medicine', 'medicine_days', 'next_visit', 'diagnosis', 'visit_date']} emptyIcon={FileText} emptyTitle="No Medicine History" emptyDescription="Medicine prescribed to patients will appear here." /><DashboardTable title="Pending Bills" rows={pendingBills} cols={['token_number', 'bill_number', 'patient_name', 'grand_total', 'paid', 'balance', 'status']} emptyIcon={Calculator} emptyTitle="No Pending Bills" emptyDescription="Auto-generated hospital bills will appear here." /></section>{editingPatient && <RecordModal title="Patient Management" fields={RESOURCES.patients.fields} record={editingPatient} context={{ auth, brand, assistants, catalogs: data.master_catalogs || [], medicines: data.medicines || [] }} onClose={() => setEditingPatient(null)} onSubmit={submitPatient} />}</div>;
+  return <div className="stack"><section className="panel"><div className="module-head"><div><h2>{hospitalFrontDeskRole(auth) ? 'Reception Desk' : 'Patient Desk'}</h2><p className="muted">Daily token queue, doctor recommendations, services and billing workflow.</p></div>{canCreatePatient && <div className="module-actions"><button className="primary-btn" onClick={() => setEditingPatient(newPatient())}><Plus size={16} /> Add Patient</button></div>}</div><DataTable rows={frontDeskRows.slice(0, 8)} columns={['token_number', 'mr_number', 'patient_name', 'phone', 'department', 'doctor_name', 'status']} onAdd={canCreatePatient ? () => setEditingPatient(newPatient()) : null} actions={(row) => <><button className="ghost-btn" onClick={() => printPatientTokenSlip(row, brand)}><Printer size={15} /> Token Slip</button><button className="ghost-btn" onClick={() => setEditingPatient(row)}><Edit3 size={15} /> Open File</button></>} /></section><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? value : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><section className="split"><DashboardTable title={hospitalFrontDeskRole(auth) ? 'Today Reception Queue' : 'Doctor Treatment Status'} rows={frontDeskRows} cols={['token_number', 'mr_number', 'patient_name', 'visit_type', 'department', 'doctor_name', 'status']} emptyIcon={Users} emptyTitle="No Queue Available" emptyDescription="Doctor or assistant added patients will appear here." /><DashboardTable title="Follow Up Patients" rows={followUps} cols={['patient_name', 'phone', 'diagnosis', 'next_visit', 'status']} emptyIcon={Bell} emptyTitle="No Follow Ups" emptyDescription="Upcoming follow-up patients will appear here." /></section><section className="split"><DashboardTable title="Doctor Prescriptions" rows={data.hospital_prescriptions || []} cols={['token_number', 'patient_name', 'doctor_name', 'medicine_name', 'morning', 'afternoon', 'evening', 'night', 'days', 'status']} emptyIcon={Boxes} emptyTitle="No Pharmacy Tasks" emptyDescription="Doctor prescriptions will appear here." /><DashboardTable title="Doctor Recommended Tests / Services" rows={[...(data.hospital_tasks || []), ...pendingLab, ...pendingRadiology]} cols={['token_number', 'patient_name', 'task_name', 'test_name', 'study_type', 'status']} emptyIcon={FileText} emptyTitle="No Recommended Services" emptyDescription="Injection, X-Ray, lab and other recommendations will appear here." /></section><section className="split"><DashboardTable title="Medicine / Prescription History" rows={medicines} cols={['patient_name', 'medicine', 'medicine_days', 'next_visit', 'diagnosis', 'visit_date']} emptyIcon={FileText} emptyTitle="No Medicine History" emptyDescription="Medicine prescribed to patients will appear here." /><DashboardTable title="Pending Bills" rows={pendingBills} cols={['token_number', 'bill_number', 'patient_name', 'grand_total', 'paid', 'balance', 'status']} emptyIcon={Calculator} emptyTitle="No Pending Bills" emptyDescription="Auto-generated hospital bills will appear here." /></section>{editingPatient && <RecordModal title="Patient Management" fields={RESOURCES.patients.fields} record={editingPatient} context={{ auth, brand, assistants, catalogs: data.master_catalogs || [], medicines: data.medicines || [] }} onClose={() => setEditingPatient(null)} onSubmit={submitPatient} />}</div>;
 }
 
 function currentDoctorName(auth, brand) {
@@ -2005,6 +2015,11 @@ function printHospitalBill(bill, lines = [], brand = {}) {
   const rows = lines.map((line) => `<tr><td>${line.description || ''}</td><td>${line.item_type || ''}</td><td>${line.status || 'Completed'}</td><td style="text-align:right">${money(line.amount)}</td></tr>`).join('');
   const html = `<section class="receipt-shell"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>Hospital Bill ${bill.bill_number || ''}</h2><p>${new Date().toLocaleString()}</p></div></div><p><strong>Patient:</strong> ${bill.patient_name || ''}</p><table><thead><tr><th>Service</th><th>Type</th><th>Status</th><th style="text-align:right">Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No services</td></tr>'}</tbody></table><h3 class="receipt-total">Total: ${money(total)}</h3><p>Paid: ${money(paid)} | Balance: ${money(Math.max(0, total - paid))}</p><p>${brand?.footer || 'Thank you.'}</p></section>`;
   printHtml(`Hospital Bill ${bill.bill_number || ''}`, html);
+}
+
+function printPatientTokenSlip(patient, brand = {}) {
+  const html = `<section class="receipt-shell thermal"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:52px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div></div><div style="text-align:center;border:2px solid #111;border-radius:12px;padding:16px;margin:12px 0"><div style="font-size:13px;font-weight:800;color:#666">TOKEN NUMBER</div><div style="font-size:42px;font-weight:900;letter-spacing:1px">${patient.token_number || ''}</div></div><p><strong>Patient:</strong> ${patient.patient_name || ''}</p><p><strong>MR:</strong> ${patient.mr_number || ''}</p><p><strong>Doctor:</strong> ${patient.doctor_name || ''}</p><p><strong>Date:</strong> ${patient.visit_date ? new Date(patient.visit_date).toLocaleDateString() : new Date().toLocaleDateString()}</p><p><strong>Diagnosis:</strong> ${patient.diagnosis || ''}</p><p><strong>Instructions:</strong> ${patient.clinical_notes || patient.notes || ''}</p><p class="muted">Reception par yeh slip dikha kar services/billing complete karwain.</p></section>`;
+  printHtml(`Token ${patient.token_number || ''}`, html);
 }
 
 function invoicePdfLines(invoice, cart, brand = {}) {

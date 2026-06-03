@@ -1019,6 +1019,31 @@ export async function pullRemoteChanges() {
   }
 }
 
+export async function hydrateRemoteStores(stores = []) {
+  if (!navigator.onLine || !localStorage.getItem('dsh_token')) return { skipped: true };
+  const db = await database();
+  let imported = 0;
+  for (const store of stores) {
+    if (!STORE_NAMES.includes(store)) continue;
+    try {
+      const response = await fetch(`${API_URL}/${apiResourceName(store)}?per_page=1000`, {
+        headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) continue;
+      const rows = Array.isArray(payload) ? payload : payload.data || [];
+      for (const row of rows) {
+        if (!row?.uuid) continue;
+        await db.put(store, normalizeNumbers(scopeRecordForSave(store, { ...row, sync_status: 'synced' })));
+        imported += 1;
+      }
+    } catch {
+      // Keep local data if one remote store is temporarily unavailable.
+    }
+  }
+  return { imported };
+}
+
 export function exportCsv(filename, rows) {
   const keys = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
   const csv = [keys.join(','), ...rows.map((row) => keys.map((key) => quote(row[key])).join(','))].join('\n');
