@@ -56,6 +56,18 @@ const BUSINESS_SYNC_ENTITIES = new Set([
   'master_catalogs', 'medicines', 'licenses',
 ]);
 
+const TENANT_SCOPED_STORES = new Set([
+  'products', 'categories', 'brands', 'customers', 'customer_ledgers', 'suppliers',
+  'supplier_ledgers', 'sales', 'sale_items', 'purchases', 'purchase_items',
+  'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
+  'settings', 'notifications', 'inventory_transactions', 'manual_repair_receipts',
+  'mobile_wallet_transactions', 'patients', 'assistants', 'hospital_prescriptions',
+  'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports',
+  'hospital_bills', 'hospital_bill_items', 'master_catalogs',
+]);
+
+const BUSINESS_TYPED_STORES = new Set(['products', 'categories', 'brands', 'master_catalogs', 'medicines']);
+
 export async function database() {
   return openDB('dsh-production-db', 7, {
     upgrade(db) {
@@ -72,6 +84,7 @@ export async function listRecords(store) {
   const db = await database();
   return (await db.getAll(store))
     .filter((record) => !record.deleted_at)
+    .filter((record) => scopedRecordVisible(store, record))
     .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
 }
 
@@ -92,7 +105,7 @@ export async function cleanupStartupData() {
     const active = rows.filter((row) => !row.deleted_at);
     const groups = new Map();
     for (const row of active) {
-      const key = String(keyFor(row) || row.uuid).trim().toLowerCase();
+      const key = scopedDedupeKey(store, row, keyFor(row));
       if (!key) continue;
       const current = groups.get(key);
       if (!current || String(row.updated_at || '').localeCompare(String(current.updated_at || '')) > 0) {
@@ -100,7 +113,7 @@ export async function cleanupStartupData() {
       }
     }
     for (const row of active) {
-      const key = String(keyFor(row) || row.uuid).trim().toLowerCase();
+      const key = scopedDedupeKey(store, row, keyFor(row));
       const keeper = groups.get(key);
       if (keeper && keeper.uuid !== row.uuid) await db.delete(store, row.uuid);
     }
@@ -108,6 +121,14 @@ export async function cleanupStartupData() {
 
   await cleanupLicenseStorage(db);
   await cleanupSyncQueue(db);
+}
+
+function scopedDedupeKey(store, row, rawKey) {
+  const key = String(rawKey || row.uuid || '').trim().toLowerCase();
+  if (!key) return '';
+  const scope = TENANT_SCOPED_STORES.has(store) ? String(row.license_uuid || 'global').trim().toLowerCase() : 'global';
+  const business = BUSINESS_TYPED_STORES.has(store) ? String(row.business_type || 'all').trim().toLowerCase() : 'all';
+  return `${scope}|${business}|${key}`;
 }
 
 export async function getRecord(store, uuid) {
@@ -119,7 +140,7 @@ export async function saveRecord(store, data, action = data.uuid ? 'update' : 'c
   const db = await database();
   const now = new Date().toISOString();
   const uuid = data.uuid || crypto.randomUUID();
-  const clean = normalizeNumbers({ ...data, uuid, updated_at: now, sync_status: 'pending' });
+  const clean = normalizeNumbers(scopeRecordForSave(store, { ...data, uuid, updated_at: now, sync_status: 'pending' }));
   await db.put(store, clean);
   await queueOperation(store, clean.uuid, action, clean);
   await auditLog(action, store, clean.uuid, clean);
@@ -234,6 +255,39 @@ async function markRecordSynced(resource, uuid) {
 function remotePayload(data) {
   const { id, created_at, updated_at, deleted_at, sync_status, ...payload } = data;
   return payload;
+}
+
+function currentScope() {
+  return {
+    role: localStorage.getItem('dsh_user_role') || '',
+    license_uuid: localStorage.getItem('dsh_license_uuid') || '',
+    business_type: localStorage.getItem('dsh_business_type') || '',
+  };
+}
+
+function scopedRecordVisible(store, record) {
+  const scope = currentScope();
+  if (scope.role === 'Super Admin') return true;
+  if (TENANT_SCOPED_STORES.has(store) && scope.license_uuid) {
+    return record.license_uuid === scope.license_uuid;
+  }
+  if (BUSINESS_TYPED_STORES.has(store) && scope.business_type && record.business_type) {
+    if (scope.business_type === 'General Store') return ['General Store', 'Grocery Store', 'All'].includes(record.business_type);
+    if (scope.business_type === 'Grocery Store') return ['Grocery Store', 'General Store', 'All'].includes(record.business_type);
+    return [scope.business_type, 'All'].includes(record.business_type);
+  }
+  return true;
+}
+
+function scopeRecordForSave(store, record) {
+  const scope = currentScope();
+  if (scope.role !== 'Super Admin' && TENANT_SCOPED_STORES.has(store) && scope.license_uuid) {
+    record.license_uuid = record.license_uuid || scope.license_uuid;
+  }
+  if (scope.role !== 'Super Admin' && BUSINESS_TYPED_STORES.has(store) && scope.business_type) {
+    record.business_type = scope.business_type;
+  }
+  return record;
 }
 
 export async function saveUserAccount(record) {
@@ -749,6 +803,10 @@ export async function notificationCenter() {
     listRecords('products'), listRecords('sales'), listRecords('repairs'), listRecords('manual_repair_receipts'),
     listRecords('suppliers'), listRecords('purchases'), listRecords('licenses'), listRecords('notifications'),
   ]);
+  const scope = currentScope();
+  const visibleLicenses = scope.role === 'Super Admin' || !scope.license_uuid
+    ? licenses
+    : licenses.filter((license) => license.uuid === scope.license_uuid);
   const dismissed = new Set(saved.map((item) => item.dismissed_source).filter(Boolean));
   const isOpenRepair = (repair) => !['Delivered', 'Completed'].includes(String(repair.status || '').trim());
   const daysLeft = (license) => {
@@ -760,7 +818,7 @@ export async function notificationCenter() {
     return Math.ceil((end.getTime() - start.getTime()) / 86400000);
   };
   const generated = [
-    ...licenses
+    ...visibleLicenses
       .map((license) => ({ license, days: daysLeft(license) }))
       .filter(({ license, days }) => license.status === 'Active' && days !== null && days <= 30)
       .map(({ license, days }) => ({
@@ -859,7 +917,13 @@ export async function reportData(type) {
 export async function syncNow() {
   if (!navigator.onLine) return { skipped: true };
   const db = await database();
-  const pending = (await db.getAll('sync_queue')).filter((item) => item.status === 'pending');
+  const scope = currentScope();
+  const pending = (await db.getAll('sync_queue')).filter((item) => {
+    if (item.status !== 'pending') return false;
+    if (scope.role === 'Super Admin' || !scope.license_uuid) return true;
+    if (!TENANT_SCOPED_STORES.has(item.entity)) return true;
+    return item.data?.license_uuid === scope.license_uuid;
+  });
   if (!pending.length) return { synced: 0 };
   try {
     const response = await fetch(`${API_URL}/sync/push`, {

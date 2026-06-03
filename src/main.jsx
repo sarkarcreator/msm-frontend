@@ -375,6 +375,8 @@ function App() {
         await saveBrandSettings(payload.settings);
         const sessionUser = payload.user || {};
         const roleName = userRole(sessionUser);
+        localStorage.setItem('dsh_license_uuid', payload.settings.license_uuid || sessionUser.license_uuid || '');
+        localStorage.setItem('dsh_business_type', payload.settings.business_type || sessionUser.business_type || '');
         if (roleName && roleName !== auth.role) {
           localStorage.setItem('dsh_user_role', roleName);
           setAuth((current) => ({ ...current, role: roleName, user: sessionUser.name || current.user }));
@@ -432,9 +434,13 @@ function App() {
 
   function handleLogin(session) {
     const roleName = userRole(session.user);
+    const licenseUuid = session.settings?.license_uuid || session.user?.license_uuid || session.license?.uuid || '';
+    const businessType = session.settings?.business_type || session.user?.business_type || session.license?.business_type || '';
     localStorage.setItem('dsh_token', session.token);
     localStorage.setItem('dsh_user_name', session.user?.name || session.user?.email || 'User');
     localStorage.setItem('dsh_user_role', roleName);
+    localStorage.setItem('dsh_license_uuid', licenseUuid);
+    localStorage.setItem('dsh_business_type', businessType);
     setAuth({ token: session.token, user: session.user?.name || session.user?.email || 'User', role: roleName });
     if (session.settings) {
       saveBrandSettings(session.settings).then(refresh);
@@ -446,6 +452,8 @@ function App() {
     localStorage.removeItem('dsh_token');
     localStorage.removeItem('dsh_user_name');
     localStorage.removeItem('dsh_user_role');
+    localStorage.removeItem('dsh_license_uuid');
+    localStorage.removeItem('dsh_business_type');
     setAuth({ token: '', user: '', role: '' });
     setData({});
     setSnapshot(null);
@@ -486,7 +494,7 @@ function App() {
           {active === 'expenses' && <CrudModule config={RESOURCES.expenses} rows={data.expenses || []} refresh={refresh} />}
           {active === 'notifications' && <Notifications data={data} refresh={refresh} auth={auth} />}
           {active === 'accounting' && <Accounting data={data} refresh={refresh} />}
-          {active === 'reports' && <Reports refreshKey={refreshKey} />}
+          {active === 'reports' && <Reports refreshKey={refreshKey} brand={brand} />}
           {active === 'catalog' && <CatalogModule rows={data.master_catalogs || []} products={data.products || []} brand={brand} refresh={refresh} />}
           {active === 'medicines' && <MedicinesModule rows={data.medicines || []} refresh={refresh} />}
           {active === 'backup' && <BackupModule data={data} auth={auth} brand={brand} refresh={refresh} />}
@@ -777,7 +785,7 @@ function CatalogModule({ rows, products, brand, refresh }) {
   const blank = () => config.defaultRecord({ brand });
 
   async function submit(record) {
-    const saved = await saveRecord('master_catalogs', record);
+    const saved = await saveRecord('master_catalogs', { ...record, business_type: brand?.business_type || 'General Store' });
     runInBackground(() => saveRemoteRecord('master_catalogs', saved), 'Catalog synced in background');
     setEditing(null);
     await refresh();
@@ -836,7 +844,7 @@ function CatalogModule({ rows, products, brand, refresh }) {
     notify('Catalog item added to inventory');
   }
 
-  return <div className="stack"><section className="panel"><ModuleHeader title="Master Catalog" query={query} setQuery={setQuery} onAdd={() => setEditing(blank())} onImport={() => importRef.current?.click()} onExport={() => exportCsv('master-catalog.csv', filtered)} onPrint={() => printTable('Master Catalog', filtered, config.columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><div className="module-actions report-actions"><button className="ghost-btn" onClick={seedPresets}><Plus size={16} /> Add Starter Catalog</button><button className="ghost-btn" onClick={downloadCatalogTemplate}><Download size={16} /> CSV Template</button><span className="shortcut-pill">{brand?.business_type || 'General Store'} catalog: {filtered.length} shown / {importedCount} total / {presetCount} starter</span></div><DataTable rows={filtered} columns={config.columns} onAdd={() => setEditing(blank())} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => addToInventory(row)}><Boxes size={15} /> Inventory</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Catalog Detail" row={viewing} columns={config.columns} onClose={() => setViewing(null)} />}{editing && <RecordModal title="Master Catalog" fields={config.fields} record={editing} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store="master_catalogs" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  return <div className="stack"><section className="panel"><ModuleHeader title="Master Catalog" query={query} setQuery={setQuery} onAdd={() => setEditing(blank())} onImport={() => importRef.current?.click()} onExport={() => exportCsv('master-catalog.csv', filtered)} onPrint={() => printTable('Master Catalog', filtered, config.columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><div className="module-actions report-actions"><button className="ghost-btn" onClick={seedPresets}><Plus size={16} /> Add Starter Catalog</button><button className="ghost-btn" onClick={downloadCatalogTemplate}><Download size={16} /> CSV Template</button><span className="shortcut-pill">{brand?.business_type || 'General Store'} catalog: {filtered.length} shown / {importedCount} total / {presetCount} starter</span></div><DataTable rows={filtered} columns={config.columns} onAdd={() => setEditing(blank())} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => addToInventory(row)}><Boxes size={15} /> Inventory</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Catalog Detail" row={viewing} columns={config.columns} onClose={() => setViewing(null)} />}{editing && <RecordModal title="Master Catalog" fields={config.fields} record={editing} context={{ brand }} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store="master_catalogs" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function MedicinesModule({ rows, refresh }) {
@@ -1395,15 +1403,31 @@ function Accounting({ data, refresh }) {
   return <div className="stack"><div className="metric-grid"><div className="metric"><span>Debit Entries</span><strong>{money(debit)}</strong></div><div className="metric"><span>Credit Entries</span><strong>{money(credit)}</strong></div><div className="metric"><span>Daily Closing</span><strong>{money(debit - credit)}</strong></div><div className="metric"><span>Profit & Loss</span><strong>{money((data.sales || []).reduce((sum, row) => sum + Number(row.profit || 0), 0) - (data.expenses || []).reduce((sum, row) => sum + Number(row.amount || 0), 0))}</strong></div></div><section className="panel"><h2>Cash Book</h2><DataTable rows={data.cashbook || []} columns={['type', 'description', 'debit', 'credit', 'entry_at']} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Cash Book Detail" row={viewing} columns={['type', 'description', 'debit', 'credit', 'reference', 'entry_at']} onClose={() => setViewing(null)} />}{deleting && <DeleteDialog row={deleting} store="cashbook" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
-function Reports({ refreshKey }) {
-  const [type, setType] = useState('daily_sales');
+function Reports({ refreshKey, brand }) {
+  const reportTypes = useMemo(() => reportTypesForBusiness(brand), [brand]);
+  const [type, setType] = useState(reportTypes[0]);
   const [rows, setRows] = useState([]);
   async function generate(nextType = type) {
     setType(nextType);
     setRows(await reportData(nextType));
   }
-  useEffect(() => { generate(type); }, [refreshKey]);
-  return <section className="panel"><ModuleHeader title="Reports" query="" setQuery={() => {}} onAdd={null} onExport={() => exportCsv(`${type}.csv`, rows)} onPrint={() => printTable(type.replaceAll('_', ' '), rows, Object.keys(rows[0] || {}))} /><div className="module-actions report-actions"><button className="ghost-btn" onClick={() => downloadPdf(`${type}.pdf`, type.replaceAll('_', ' '), rowsToPdfLines(rows))}><FileDown size={16} /> Export PDF</button></div><div className="tabs">{['daily_sales', 'weekly_sales', 'monthly_sales', 'yearly_sales', 'product_sales', 'profit', 'inventory', 'customers', 'expenses', 'suppliers', 'purchases', 'customer_ledger', 'supplier_ledger', 'repairs', 'credit_recovery', 'mobile_wallets', 'patients', 'daily_patients', 'monthly_patients', 'doctor_performance', 'hospital_revenue', 'lab_report_summary', 'radiology_report_summary', 'pharmacy_prescriptions', 'follow_up_report', 'pending_bills', 'top_medicines', 'assistants', 'medicines', 'low_stock_medicines', 'near_expiry_medicines', 'expired_medicines', 'manufacturer_reports', 'category_reports'].map((item) => <button className={type === item ? 'tab active' : 'tab'} key={item} onClick={() => generate(item)}>{item.replaceAll('_', ' ')}</button>)}</div><DataTable rows={rows} columns={Object.keys(rows[0] || { message: 'No Data Available' })} /></section>;
+  useEffect(() => {
+    const safeType = reportTypes.includes(type) ? type : reportTypes[0];
+    generate(safeType);
+  }, [refreshKey, reportTypes.join('|')]);
+  return <section className="panel"><ModuleHeader title="Reports" query="" setQuery={() => {}} onAdd={null} onExport={() => exportCsv(`${type}.csv`, rows)} onPrint={() => printTable(type.replaceAll('_', ' '), rows, Object.keys(rows[0] || {}))} /><div className="module-actions report-actions"><button className="ghost-btn" onClick={() => downloadPdf(`${type}.pdf`, type.replaceAll('_', ' '), rowsToPdfLines(rows))}><FileDown size={16} /> Export PDF</button></div><div className="tabs">{reportTypes.map((item) => <button className={type === item ? 'tab active' : 'tab'} key={item} onClick={() => generate(item)}>{item.replaceAll('_', ' ')}</button>)}</div><DataTable rows={rows} columns={Object.keys(rows[0] || { message: 'No Data Available' })} /></section>;
+}
+
+function reportTypesForBusiness(brand) {
+  const type = brand?.business_type || 'General Store';
+  const retail = ['daily_sales', 'weekly_sales', 'monthly_sales', 'yearly_sales', 'product_sales', 'profit', 'inventory', 'customers', 'expenses', 'suppliers', 'purchases', 'customer_ledger', 'supplier_ledger', 'credit_recovery', 'mobile_wallets'];
+  const repair = ['repairs'];
+  const pharmacy = ['medicines', 'low_stock_medicines', 'near_expiry_medicines', 'expired_medicines', 'manufacturer_reports', 'category_reports'];
+  const hospital = ['patients', 'daily_patients', 'monthly_patients', 'doctor_performance', 'hospital_revenue', 'lab_report_summary', 'radiology_report_summary', 'pharmacy_prescriptions', 'follow_up_report', 'pending_bills', 'top_medicines', 'assistants', 'expenses'];
+  if (type === 'Hospital') return hospital;
+  if (type === 'Pharmacy') return [...retail, ...pharmacy];
+  if (REPAIR_SHOP_TYPES.has(type)) return [...retail, ...repair];
+  return retail;
 }
 
 function ModuleHeader({ title, query, setQuery, onAdd, onImport, onExport, onPrint }) {
@@ -1456,12 +1480,16 @@ function RecordModal({ title, fields, record, onSubmit, onClose, context = {} })
   const assistantOptions = assistantOptionsForPatient(context);
   const medicineOptions = medicineOptionsForPatient(context);
   const userRoleOptions = roleOptionsForUserForm(context);
+  const scopedBusinessType = context.brand?.business_type || 'General Store';
   return <ModalShell onClose={onClose}><form onSubmit={(e) => { e.preventDefault(); onSubmit(form); }}><div className="modal-header"><h2>{record.uuid ? `Edit ${label}` : `Add ${label}`}</h2><button type="button" className="icon-btn" onClick={onClose} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid">{fields.map(([key, fieldLabel, type = 'text', required = false, options]) => {
     if (title === 'User Management' && key === 'role') {
       return <label key={key}>{fieldLabel}<select required={required} value={form[key] || userRoleOptions[0]} onChange={(e) => change(key, e.target.value)}>{userRoleOptions.map((option) => <option key={option}>{option}</option>)}</select></label>;
     }
     if (title === 'Patient Management' && key === 'assistant_name') {
       return <label key={key}>{fieldLabel}<select value={form[key] || ''} onChange={(e) => change(key, e.target.value)}><option value="">Select assistant / compounder</option>{assistantOptions.map((option) => <option key={option}>{option}</option>)}</select></label>;
+    }
+    if (title === 'Master Catalog' && key === 'business_type') {
+      return <label key={key}>{fieldLabel}<input readOnly value={scopedBusinessType} /></label>;
     }
     if (title === 'Patient Management' && key === 'medicine') {
       const listId = `medicine-options-${record.uuid || 'new'}`;
