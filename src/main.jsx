@@ -319,12 +319,36 @@ function App() {
 
   async function refresh() {
     await cleanupStartupData();
+    await hydrateSessionSettings();
     const stores = ['products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items', 'expenses', 'repairs', 'repair_updates', 'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'master_catalogs', 'payments', 'cashbook', 'users', 'settings', 'notifications', 'licenses', 'audit_logs', 'inventory_transactions', 'customer_ledgers', 'supplier_ledgers', 'sync_queue'];
     const entries = await Promise.all(stores.map(async (store) => [store, await listRecords(store)]));
+    const currentBrand = await getBrandSettings();
     setData(Object.fromEntries(entries));
     setSnapshot(await dashboardSnapshot());
-    setBrand(await getBrandSettings());
+    setBrand(currentBrand);
+    window.__msmBrand = currentBrand;
     setRefreshKey((value) => value + 1);
+  }
+
+  async function hydrateSessionSettings() {
+    if (!auth.token) return;
+    try {
+      const response = await fetch(`${API_URL}/me`, {
+        headers: { Accept: 'application/json', Authorization: `Bearer ${auth.token}` },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (response.ok && payload.settings) {
+        await saveBrandSettings(payload.settings);
+        const sessionUser = payload.user || {};
+        const roleName = userRole(sessionUser);
+        if (roleName && roleName !== auth.role) {
+          localStorage.setItem('dsh_user_role', roleName);
+          setAuth((current) => ({ ...current, role: roleName, user: sessionUser.name || current.user }));
+        }
+      }
+    } catch {
+      // Keep local settings when the server is unavailable.
+    }
   }
 
   useEffect(() => {
@@ -380,6 +404,7 @@ function App() {
     setAuth({ token: session.token, user: session.user?.name || session.user?.email || 'User', role: roleName });
     if (session.settings) {
       saveBrandSettings(session.settings).then(refresh);
+      window.__msmBrand = session.settings;
     }
   }
 
@@ -1359,8 +1384,8 @@ function statusClass(value) {
   return 'ok';
 }
 
-function printTable(title, rows, columns) {
-  const html = `<div class="brand">Digital Solutions Hub</div><h2>${title}</h2><table><thead><tr>${columns.map((col) => `<th>${headerLabel(col)}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${columns.map((col) => `<td>${printableFormat(row[col], col)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+function printTable(title, rows, columns, brand = window.__msmBrand || {}) {
+  const html = `<div class="brand">${shopDisplayName(brand)}</div><h2>${title}</h2><table><thead><tr>${columns.map((col) => `<th>${headerLabel(col)}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${columns.map((col) => `<td>${printableFormat(row[col], col)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   printHtml(title, html);
 }
 
@@ -1371,8 +1396,8 @@ function printableFormat(value, key) {
   return String(value ?? '');
 }
 
-function legacyPrintInvoice(sale, cart) {
-  const html = `<div class="brand">DSH - Digital Solutions Hub</div><h2>Invoice ${sale.invoice_number}</h2><p>${sale.customer_name} - ${new Date(sale.sold_at).toLocaleString()}</p><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.map((item) => `<tr><td>${item.product_name}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('')}</tbody></table><h3 class="right">Total: ${money(sale.total)}</h3><p>Paid: ${money(sale.paid)} | Balance: ${money(sale.balance)}</p>`;
+function legacyPrintInvoice(sale, cart, brand = window.__msmBrand || {}) {
+  const html = `<div class="brand">${shopDisplayName(brand)}</div><h2>Invoice ${sale.invoice_number}</h2><p>${sale.customer_name} - ${new Date(sale.sold_at).toLocaleString()}</p><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.map((item) => `<tr><td>${item.product_name}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('')}</tbody></table><h3 class="right">Total: ${money(sale.total)}</h3><p>Paid: ${money(sale.paid)} | Balance: ${money(sale.balance)}</p>`;
   printHtml(`Invoice ${sale.invoice_number}`, html);
 }
 
