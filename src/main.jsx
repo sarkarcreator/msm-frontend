@@ -1250,7 +1250,7 @@ function SettingsPanel({ brand, rows, refresh }) {
 
 function LicenseManager({ rows, refresh }) {
   const licenseColumns = ['license_key', 'activation_code', 'owner_name', 'business_type', 'sale_price', 'cost_price', 'profit', 'type', 'status', 'expiry_date', 'days_left', 'renewal_state'];
-  const newLicenseForm = () => ({ owner_name: '', business_type: 'Mobile Shop', device_id: ensureDeviceId(), type: '1 Month', status: 'Active', sale_price: 0, cost_price: 0, theme_color: '#14B8A6', logo: '', footer_branding: '' });
+  const newLicenseForm = () => ({ owner_name: '', business_type: 'Mobile Shop', device_id: '', type: '1 Month', status: 'Active', sale_price: 0, cost_price: 0, theme_color: '#14B8A6', logo: '', footer_branding: '' });
   const [form, setForm] = useState(newLicenseForm);
   const [status, setStatus] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -1317,7 +1317,7 @@ function LicenseManager({ rows, refresh }) {
           actions={(row) => (
             <>
               <button className="ghost-btn" onClick={() => setViewing(row)}>View</button>
-              <button className="ghost-btn" onClick={() => { setForm({ ...row, business_type: row.business_type || 'Mobile Shop', device_id: row.device_id || ensureDeviceId() }); setCreating(true); }}><Edit3 size={15} /> Edit</button>
+              <button className="ghost-btn" onClick={() => { setForm({ ...row, business_type: row.business_type || 'Mobile Shop', device_id: row.device_id || '' }); setCreating(true); }}><Edit3 size={15} /> Edit</button>
               <button className="ghost-btn" onClick={() => setRenewing({ ...row, renewal_type: row.type || '1 Month', sale_price: row.sale_price || 0, cost_price: row.cost_price || 0 })}><KeyRound size={15} /> Renew</button>
               <button className="ghost-btn" onClick={() => downloadPdf(`${row.license_key}.pdf`, 'License Certificate', [`License: ${row.license_key}`, `Activation: ${row.activation_code}`, `Owner: ${row.owner_name}`, `Shop Type: ${row.business_type || 'Mobile Shop'}`, `Device: ${row.device_id}`, `Type: ${row.type}`, `Expiry: ${row.expiry_date}`])}><FileDown size={15} /> PDF</button>
               <button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button>
@@ -1337,7 +1337,7 @@ function LicenseManager({ rows, refresh }) {
               <div className="form-grid">
                 <label>Shop Owner<input required value={form.owner_name || ''} onChange={(e) => setForm({ ...form, owner_name: e.target.value })} /></label>
                 <label>Shop Type<select value={form.business_type || 'Mobile Shop'} onChange={(e) => setForm({ ...form, business_type: e.target.value })}>{SHOP_TYPES.map((item) => <option key={item}>{item}</option>)}</select></label>
-                <label>Device Binding<input value={form.device_id || ensureDeviceId()} onChange={(e) => setForm({ ...form, device_id: e.target.value })} /></label>
+                <label>Device Binding<input placeholder="Blank rakhein, client activation par auto bind hoga" value={form.device_id || ''} onChange={(e) => setForm({ ...form, device_id: e.target.value })} /></label>
                 <label>License Type<select value={form.type || '1 Month'} onChange={(e) => setForm({ ...form, type: e.target.value })}>{['1 Month', '6 Months', '1 Year', 'Lifetime'].map((item) => <option key={item}>{item}</option>)}</select></label>
                 <label>Status<select value={form.status || 'Active'} onChange={(e) => setForm({ ...form, status: e.target.value })}><option>Active</option><option>Disabled</option></select></label>
                 <label>Expiry Date<input type="date" value={form.expiry_date === 'Lifetime' ? '' : form.expiry_date || ''} onChange={(e) => setForm({ ...form, expiry_date: e.target.value })} /></label>

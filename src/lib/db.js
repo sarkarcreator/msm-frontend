@@ -436,7 +436,7 @@ export async function quickCustomer({ name, phone, address, cnic, notes }) {
 export async function generateLicense({
   owner_name,
   business_type = 'Mobile Shop',
-  device_id,
+  device_id = '',
   type = '1 Month',
   status = 'Active',
   sale_price = 0,
@@ -456,7 +456,7 @@ export async function generateLicense({
     activation_code: crypto.randomUUID().slice(0, 12).toUpperCase(),
     owner_name,
     business_type,
-    device_id: device_id || ensureDeviceId(),
+    device_id: device_id || '',
     type,
     status,
     trial: type === 'Trial',
