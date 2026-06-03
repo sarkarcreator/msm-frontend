@@ -8,14 +8,14 @@ export const STORE_NAMES = [
   'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
   'roles', 'permissions', 'settings', 'notifications', 'inventory_transactions',
   'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants',
-  'master_catalogs', 'licenses', 'audit_logs', 'sync_queue',
+  'master_catalogs', 'medicines', 'licenses', 'audit_logs', 'sync_queue',
 ];
 
 const MONEY_FIELDS = new Set([
   'purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price',
   'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'subtotal',
   'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit',
-  'repair_charges', 'advance_payment', 'remaining_amount',
+  'repair_charges', 'advance_payment', 'remaining_amount', 'mrp', 'tax_percentage',
 ]);
 
 const DEFAULT_BRAND = {
@@ -47,11 +47,11 @@ const BUSINESS_SYNC_ENTITIES = new Set([
   'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
   'roles', 'permissions', 'settings', 'notifications', 'inventory_transactions',
   'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants',
-  'master_catalogs', 'licenses',
+  'master_catalogs', 'medicines', 'licenses',
 ]);
 
 export async function database() {
-  return openDB('dsh-production-db', 5, {
+  return openDB('dsh-production-db', 6, {
     upgrade(db) {
       for (const store of STORE_NAMES) {
         if (!db.objectStoreNames.contains(store)) {
@@ -77,6 +77,7 @@ export async function cleanupStartupData() {
     ['repairs', (row) => row.job_number || `${row.imei || ''}-${row.customer_name || ''}` || row.uuid],
     ['sales', (row) => row.invoice_number || row.uuid],
     ['licenses', (row) => row.license_key || row.activation_code || `${row.owner_name || ''}-${row.device_id || ''}-${row.type || ''}` || row.uuid],
+    ['medicines', (row) => row.barcode || row.registration_no || `${row.brand_name || ''}-${row.generic_name || ''}-${row.strength || ''}` || row.uuid],
     ['settings', (row) => row.key || row.uuid],
   ];
 
@@ -177,6 +178,8 @@ function apiResourceName(resource) {
     manual_repair_receipts: 'manual-repair-receipts',
     mobile_wallet_transactions: 'mobile-wallet-transactions',
     master_catalogs: 'master-catalogs',
+    medicine_categories: 'medicine-categories',
+    medicine_manufacturers: 'medicine-manufacturers',
     audit_logs: 'audit-logs',
   }[resource] || resource;
 }
@@ -193,6 +196,8 @@ async function markRecordSynced(resource, uuid) {
     'manual-repair-receipts': 'manual_repair_receipts',
     'mobile-wallet-transactions': 'mobile_wallet_transactions',
     'master-catalogs': 'master_catalogs',
+    'medicine-categories': 'medicine_categories',
+    'medicine-manufacturers': 'medicine_manufacturers',
     'audit-logs': 'audit_logs',
   }[resource] || resource;
   const db = await database();
@@ -688,11 +693,14 @@ export async function saveBrandSettings(settings) {
 }
 
 export async function reportData(type) {
-  const [sales, saleItems, products, expenses, customers, suppliers, repairs, receipts, purchases, wallets, patients, assistants] = await Promise.all([
+  const [sales, saleItems, products, expenses, customers, suppliers, repairs, receipts, purchases, wallets, patients, assistants, medicines] = await Promise.all([
     listRecords('sales'), listRecords('sale_items'), listRecords('products'), listRecords('expenses'),
     listRecords('customers'), listRecords('suppliers'), listRecords('repairs'), listRecords('manual_repair_receipts'), listRecords('purchases'),
-    listRecords('mobile_wallet_transactions'), listRecords('patients'), listRecords('assistants'),
+    listRecords('mobile_wallet_transactions'), listRecords('patients'), listRecords('assistants'), listRecords('medicines'),
   ]);
+  const today = new Date().toISOString().slice(0, 10);
+  const nearExpiryLimit = Date.now() + 90 * 86400000;
+  const medicineProducts = products.filter((product) => product.category === 'Medicine' || product.medicine_uuid);
   const rows = {
     daily_sales: sales.filter((sale) => sameDay(sale.sold_at)),
     weekly_sales: sales.filter((sale) => withinDays(sale.sold_at, 7)),
@@ -712,6 +720,12 @@ export async function reportData(type) {
     mobile_wallets: wallets,
     patients,
     assistants,
+    medicines,
+    low_stock_medicines: medicineProducts.filter((product) => Number(product.quantity || 0) <= Number(product.low_stock_threshold || 0)),
+    near_expiry_medicines: medicineProducts.filter((product) => product.expiry_date && new Date(product.expiry_date).getTime() >= Date.now() && new Date(product.expiry_date).getTime() <= nearExpiryLimit),
+    expired_medicines: medicineProducts.filter((product) => product.expiry_date && String(product.expiry_date).slice(0, 10) < today),
+    manufacturer_reports: Object.entries(medicines.reduce((acc, row) => ({ ...acc, [row.manufacturer || 'Unknown']: (acc[row.manufacturer || 'Unknown'] || 0) + 1 }), {})).map(([manufacturer, total]) => ({ manufacturer, total })),
+    category_reports: Object.entries(medicines.reduce((acc, row) => ({ ...acc, [row.category || 'Uncategorized']: (acc[row.category || 'Uncategorized'] || 0) + 1 }), {})).map(([category, total]) => ({ category, total })),
   };
   return rows[type] || [];
 }
@@ -761,28 +775,94 @@ export function exportCsv(filename, rows) {
 }
 
 export async function importCsvRecords(store, file) {
-  const text = await file.text();
-  const [headerLine, ...lines] = text.split(/\r?\n/).filter(Boolean);
-  const headers = headerLine.split(',').map((item) => item.replace(/^"|"$/g, '').trim());
-  const records = lines.map((line) => {
-    const cells = line.match(/("([^"]|"")*"|[^,]+)/g) || [];
-    return Object.fromEntries(headers.map((header, index) => [header, String(cells[index] || '').replace(/^"|"$/g, '').replaceAll('""', '"')]));
-  });
+  const records = parseCsv(await file.text());
   for (const record of records) await saveRecord(store, record);
   return records.length;
 }
 
+export async function searchMedicines(query, filters = {}) {
+  const params = new URLSearchParams({ q: query || '', per_page: String(filters.per_page || 50) });
+  for (const [key, value] of Object.entries(filters)) {
+    if (value && key !== 'per_page') params.set(key, value);
+  }
+
+  if (navigator.onLine && localStorage.getItem('dsh_token')) {
+    try {
+      const response = await fetch(`${API_URL}/medicines/search?${params}`, {
+        headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+      });
+      const payload = await response.json();
+      if (response.ok) {
+        const rows = payload.data || payload;
+        for (const row of rows) await saveRecord('medicines', row, 'sync');
+        return rows;
+      }
+    } catch {
+      // Fall back to local indexed lookup.
+    }
+  }
+
+  return offlineMedicineSearch(query, filters);
+}
+
+export async function offlineMedicineSearch(query = '', filters = {}) {
+  const terms = String(query || '').toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const rows = await listRecords('medicines');
+  return rows
+    .filter((row) => {
+      for (const [key, value] of Object.entries(filters)) {
+        if (!value || key === 'per_page') continue;
+        if (String(row[key] || '').toLowerCase() !== String(value).toLowerCase()) return false;
+      }
+      if (!terms.length) return true;
+      const haystack = [
+        row.brand_name, row.generic_name, row.composition, row.barcode,
+        row.manufacturer, row.registration_no, row.category,
+      ].join(' ').toLowerCase();
+      return terms.every((term) => haystack.includes(term) || fuzzyIncludes(haystack, term));
+    })
+    .slice(0, Number(filters.per_page || 100));
+}
+
+export async function importMedicinesFile(file, mapping = {}, rollback = true) {
+  if (navigator.onLine && localStorage.getItem('dsh_token')) {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('rollback_on_failure', rollback ? '1' : '0');
+    for (const [field, source] of Object.entries(mapping)) {
+      if (source) form.append(`mapping[${field}]`, source);
+    }
+    const response = await fetch(`${API_URL}/medicines/import`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+      body: form,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'Medicine import failed.');
+    return payload;
+  }
+
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    throw new Error('Offline import supports CSV only. XLSX import will run when online.');
+  }
+  const rows = parseCsv(await file.text());
+  let count = 0;
+  for (const row of rows) {
+    if (!row.brand_name && !row.brand && !row.name) continue;
+    await saveRecord('medicines', normalizeMedicineRow(row));
+    count += 1;
+  }
+  return { created: count, updated: 0, duplicates: 0, errors: [], total_rows: rows.length };
+}
+
 export async function importMasterCatalogCsv(file) {
   const text = await file.text();
-  const [headerLine, ...lines] = text.split(/\r?\n/).filter(Boolean);
-  const headers = headerLine.split(',').map((item) => item.replace(/^"|"$/g, '').trim());
+  const records = parseCsv(text);
   const db = await database();
   const tx = db.transaction('master_catalogs', 'readwrite');
   const now = new Date().toISOString();
   let count = 0;
-  for (const line of lines) {
-    const cells = line.match(/("([^"]|"")*"|[^,]+)/g) || [];
-    const record = Object.fromEntries(headers.map((header, index) => [header, String(cells[index] || '').replace(/^"|"$/g, '').replaceAll('""', '"')]));
+  for (const record of records) {
     if (!record.name) continue;
     await tx.store.put({ ...record, uuid: record.uuid || crypto.randomUUID(), updated_at: now, sync_status: 'local' });
     count += 1;
@@ -1020,6 +1100,66 @@ function withinDays(value, days) {
 
 function quote(value) {
   return `"${String(value ?? '').replaceAll('"', '""')}"`;
+}
+
+function parseCsv(text) {
+  const [headerLine, ...lines] = text.split(/\r?\n/).filter(Boolean);
+  if (!headerLine) return [];
+  const headers = splitCsvLine(headerLine).map((item) => item.replace(/^"|"$/g, '').trim());
+  return lines.map((line) => {
+    const cells = splitCsvLine(line);
+    return Object.fromEntries(headers.map((header, index) => [header, String(cells[index] || '').replace(/^"|"$/g, '').replaceAll('""', '"')]));
+  });
+}
+
+function splitCsvLine(line) {
+  return line.match(/("([^"]|"")*"|[^,]+)/g) || [];
+}
+
+function normalizeMedicineRow(row) {
+  const value = (...keys) => keys.map((key) => row[key]).find((item) => item !== undefined && item !== '');
+  return {
+    uuid: row.uuid || crypto.randomUUID(),
+    brand_name: value('brand_name', 'brand', 'medicine_name', 'name') || '',
+    generic_name: value('generic_name', 'generic') || '',
+    composition: value('composition', 'formula') || '',
+    strength: value('strength', 'potency') || '',
+    dosage_form: value('dosage_form', 'form') || '',
+    therapeutic_class: value('therapeutic_class', 'class') || '',
+    manufacturer: value('manufacturer', 'company') || '',
+    distributor: row.distributor || '',
+    registration_no: value('registration_no', 'registration', 'drap_no') || '',
+    barcode: row.barcode || '',
+    pack_size: value('pack_size', 'pack') || '',
+    category: row.category || 'Medicine',
+    purchase_price: Number(row.purchase_price || 0),
+    sale_price: Number(row.sale_price || 0),
+    mrp: Number(row.mrp || 0),
+    tax_percentage: Number(row.tax_percentage || 0),
+    reorder_level: Number(row.reorder_level || 0),
+    batch_tracking: row.batch_tracking ?? true,
+    expiry_tracking: row.expiry_tracking ?? true,
+    status: row.status || 'Active',
+  };
+}
+
+function fuzzyIncludes(haystack, needle) {
+  if (needle.length < 4) return false;
+  return haystack.split(/\s+/).some((word) => levenshtein(word.slice(0, Math.max(word.length, needle.length)), needle) <= 1);
+}
+
+function levenshtein(a, b) {
+  const dp = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    let prev = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const val = a[i - 1] === b[j - 1] ? dp[j - 1] : Math.min(dp[j - 1], prev, dp[j]) + 1;
+      dp[j - 1] = prev;
+      prev = val;
+    }
+    dp[b.length] = prev;
+  }
+  return dp[b.length];
 }
 
 async function cleanupLicenseStorage(db) {
