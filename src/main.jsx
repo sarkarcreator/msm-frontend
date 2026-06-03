@@ -286,6 +286,7 @@ const DEFAULT_RECORDS = {
 };
 
 const HOSPITAL_REMOTE_STORES = [
+  'users',
   'patients', 'assistants', 'hospital_prescriptions', 'hospital_orders',
   'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items',
 ];

@@ -269,7 +269,7 @@ function scopedRecordVisible(store, record) {
   const scope = currentScope();
   if (scope.role === 'Super Admin') return true;
   if (TENANT_SCOPED_STORES.has(store) && scope.license_uuid) {
-    return record.license_uuid === scope.license_uuid;
+    return !record.license_uuid || String(record.license_uuid).toLowerCase() === String(scope.license_uuid).toLowerCase();
   }
   if (BUSINESS_TYPED_STORES.has(store) && scope.business_type && record.business_type) {
     if (scope.business_type === 'General Store') return ['General Store', 'Grocery Store', 'All'].includes(record.business_type);
@@ -282,7 +282,7 @@ function scopedRecordVisible(store, record) {
 function scopeRecordForSave(store, record) {
   const scope = currentScope();
   if (scope.role !== 'Super Admin' && TENANT_SCOPED_STORES.has(store) && scope.license_uuid) {
-    record.license_uuid = record.license_uuid || scope.license_uuid;
+    record.license_uuid = scope.license_uuid;
   }
   if (scope.role !== 'Super Admin' && BUSINESS_TYPED_STORES.has(store) && scope.business_type) {
     record.business_type = scope.business_type;
@@ -1022,6 +1022,7 @@ export async function pullRemoteChanges() {
 export async function hydrateRemoteStores(stores = []) {
   if (!navigator.onLine || !localStorage.getItem('dsh_token')) return { skipped: true };
   const db = await database();
+  const scope = currentScope();
   let imported = 0;
   for (const store of stores) {
     if (!STORE_NAMES.includes(store)) continue;
@@ -1034,7 +1035,12 @@ export async function hydrateRemoteStores(stores = []) {
       const rows = Array.isArray(payload) ? payload : payload.data || [];
       for (const row of rows) {
         if (!row?.uuid) continue;
-        await db.put(store, normalizeNumbers(scopeRecordForSave(store, { ...row, sync_status: 'synced' })));
+        await db.put(store, normalizeNumbers(scopeRecordForSave(store, {
+          ...row,
+          license_uuid: scope.license_uuid || row.license_uuid,
+          business_type: scope.business_type || row.business_type,
+          sync_status: 'synced',
+        })));
         imported += 1;
       }
     } catch {
