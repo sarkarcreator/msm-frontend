@@ -505,7 +505,7 @@ function App() {
           {active === 'hospitalTasks' && <HospitalWorkflow title="Injection Room / Tasks" rows={data.hospital_tasks || []} store="hospital_tasks" columns={['patient_name', 'task_type', 'task_name', 'quantity', 'assigned_role', 'status']} refresh={refresh} />}
           {active === 'labReports' && <HospitalWorkflow title="Lab Management" rows={data.lab_reports || []} store="lab_reports" columns={['patient_name', 'test_name', 'result', 'file_url', 'status']} refresh={refresh} />}
           {active === 'radiologyReports' && <HospitalWorkflow title="Radiology" rows={data.radiology_reports || []} store="radiology_reports" columns={['patient_name', 'study_type', 'image_url', 'report_url', 'status']} refresh={refresh} />}
-          {active === 'hospitalBilling' && <HospitalWorkflow title="Hospital Billing" rows={data.hospital_bills || []} store="hospital_bills" columns={['bill_number', 'patient_name', 'doctor_fee', 'medicine_charges', 'lab_charges', 'radiology_charges', 'grand_total', 'paid', 'balance', 'status']} refresh={refresh} />}
+          {active === 'hospitalBilling' && <HospitalBillingWorkflow data={data} brand={brand} refresh={refresh} />}
           {active === 'licenses' && <LicenseManager rows={data.licenses || []} refresh={refresh} />}
           {active === 'settings' && <SettingsPanel brand={brand} rows={data.settings || []} refresh={refresh} />}
         </div>
@@ -1562,6 +1562,103 @@ function HospitalWorkflow({ title, rows, store, columns, refresh }) {
   return <div className="stack"><section className="panel"><ModuleHeader title={title} query={query} setQuery={setQuery} onAdd={null} onExport={() => exportCsv(`${store}.csv`, filtered)} onPrint={() => printTable(title, filtered, columns)} /><DataTable rows={filtered} columns={columns} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing({ ...row, status: row.status === 'Completed' ? 'Pending' : 'Completed' })}><Edit3 size={15} /> {row.status === 'Completed' ? 'Reopen' : 'Complete'}</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title={`${title} Detail`} row={viewing} columns={columns} onClose={() => setViewing(null)} />}{editing && <RecordModal title={title} fields={[['status', 'Status', 'select', true, ['Pending', 'Completed', 'Cancelled']], ['notes', 'Notes']]} record={editing} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store={store} onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
+function HospitalBillingWorkflow({ data, brand, refresh }) {
+  const [query, setQuery] = useState('');
+  const [selectedUuid, setSelectedUuid] = useState('');
+  const bills = data.hospital_bills || [];
+  const billItems = data.hospital_bill_items || [];
+  const tasks = hospitalServiceTasks(data);
+  const filteredBills = useMemo(() => filterRows(bills, query, ['bill_number', 'patient_name', 'status']), [bills, query]);
+  const activeBill = bills.find((bill) => bill.uuid === selectedUuid) || filteredBills[0] || null;
+  const lines = useMemo(() => activeBill ? hospitalBillLines(activeBill, billItems, tasks) : [], [activeBill, billItems, tasks]);
+  const total = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+  const paid = Number(activeBill?.paid || 0);
+  const balance = Math.max(0, total - paid);
+
+  useEffect(() => {
+    if (!selectedUuid && filteredBills[0]) setSelectedUuid(filteredBills[0].uuid);
+  }, [filteredBills.length, selectedUuid]);
+
+  async function updateLine(line, patch) {
+    if (line.source === 'item') {
+      const updated = await saveRecord('hospital_bill_items', { ...line.raw, amount: patch.amount ?? line.amount });
+      runInBackground(() => saveRemoteRecord('hospital_bill_items', updated), 'Bill item synced in background');
+    }
+    if (line.task) {
+      const updatedTask = await saveRecord(line.task.store, { ...line.task.raw, status: patch.status ?? line.status });
+      runInBackground(() => saveRemoteRecord(line.task.store, updatedTask), 'Hospital service synced in background');
+    }
+    await refresh();
+  }
+
+  async function saveBill(extra = {}) {
+    if (!activeBill) return;
+    const nextPaid = Number(extra.paid ?? activeBill.paid ?? 0);
+    const updated = await saveRecord('hospital_bills', {
+      ...activeBill,
+      ...hospitalBillTotals(lines, nextPaid),
+      paid: nextPaid,
+      balance: Math.max(0, total - nextPaid),
+      status: Math.max(0, total - nextPaid) <= 0 ? 'Paid' : 'Pending',
+    });
+    runInBackground(() => saveRemoteRecord('hospital_bills', updated), 'Hospital bill synced in background');
+    await refresh();
+    notify('Hospital bill saved successfully');
+  }
+
+  async function completeAll() {
+    for (const line of lines) await updateLine(line, { status: 'Completed' });
+    await saveBill();
+  }
+
+  if (!activeBill) {
+    return <section className="panel"><ModuleHeader title="Hospital Billing" query={query} setQuery={setQuery} onAdd={null} onExport={() => exportCsv('hospital-bills.csv', filteredBills)} onPrint={() => printTable('Hospital Billing', filteredBills, ['bill_number', 'patient_name', 'grand_total', 'paid', 'balance', 'status'])} /><DashboardEmpty icon={Calculator} title="No Pending Bills" description="Doctor recommendations and patient bills will appear here automatically." /></section>;
+  }
+
+  return <div className="billing-workflow"><section className="panel"><ModuleHeader title="Hospital Billing" query={query} setQuery={setQuery} onAdd={null} onExport={() => exportCsv('hospital-bills.csv', filteredBills)} onPrint={() => printHospitalBill(activeBill, lines, brand)} /><DataTable rows={filteredBills} columns={['bill_number', 'patient_name', 'doctor_fee', 'grand_total', 'paid', 'balance', 'status']} actions={(row) => <button className="ghost-btn" onClick={() => setSelectedUuid(row.uuid)}>Open</button>} /></section><section className="panel billing-panel"><div className="module-head"><div><h2>{activeBill.patient_name}</h2><p className="muted">{activeBill.bill_number} - Doctor recommendations, service completion and final bill.</p></div><div className="module-actions"><button className="ghost-btn" onClick={completeAll}>Mark All Done</button><button className="ghost-btn" onClick={() => printHospitalBill(activeBill, lines, brand)}><Printer size={16} /> Print Bill</button><button className="primary-btn" onClick={() => saveBill()}>Save Bill</button></div></div><div className="billing-lines">{lines.map((line) => <div className="billing-line" key={line.uuid}><label className="billing-check"><input type="checkbox" disabled={!line.task} checked={line.status === 'Completed'} onChange={(e) => updateLine(line, { status: e.target.checked ? 'Completed' : 'Pending' })} /><span>{line.task ? (line.status === 'Completed' ? 'Done' : 'Pending') : 'Added'}</span></label><div><strong>{line.description}</strong><small>{line.item_type}</small></div><input type="number" min="0" defaultValue={line.amount || 0} onBlur={(e) => updateLine(line, { amount: Number(e.target.value) })} /></div>)}</div><div className="totals billing-total"><span>Total <strong>{money(total)}</strong></span><label>Paid<input type="number" min="0" defaultValue={activeBill.paid || 0} onBlur={(e) => saveBill({ paid: Number(e.target.value) })} /></label><span>Balance <strong>{money(balance)}</strong></span></div></section></div>;
+}
+
+function hospitalServiceTasks(data) {
+  return [
+    ...(data.hospital_tasks || []).map((row) => ({ store: 'hospital_tasks', raw: row, patient_uuid: row.patient_uuid, name: row.task_name, type: row.task_type, status: row.status })),
+    ...(data.lab_reports || []).map((row) => ({ store: 'lab_reports', raw: row, patient_uuid: row.patient_uuid, name: row.test_name, type: 'Lab', status: row.status })),
+    ...(data.radiology_reports || []).map((row) => ({ store: 'radiology_reports', raw: row, patient_uuid: row.patient_uuid, name: row.study_type, type: 'Radiology', status: row.status })),
+  ];
+}
+
+function hospitalBillLines(bill, billItems, tasks) {
+  return billItems
+    .filter((item) => item.bill_uuid === bill.uuid)
+    .map((item) => {
+      const task = tasks.find((row) => row.patient_uuid === item.patient_uuid && String(row.name || '').toLowerCase() === String(item.description || '').toLowerCase());
+      return {
+        uuid: item.uuid,
+        source: 'item',
+        raw: item,
+        task,
+        item_type: item.item_type,
+        description: item.description,
+        amount: Number(item.amount || 0),
+        status: task?.status || 'Completed',
+      };
+    });
+}
+
+function hospitalBillTotals(lines, paid = 0) {
+  const byType = (type) => lines.filter((line) => line.item_type === type).reduce((sum, line) => sum + Number(line.amount || 0), 0);
+  const grandTotal = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+  return {
+    doctor_fee: byType('Doctor Fee'),
+    medicine_charges: byType('Medicine'),
+    injection_charges: byType('Injection'),
+    lab_charges: byType('Lab'),
+    radiology_charges: byType('Radiology'),
+    procedure_charges: lines.filter((line) => !['Doctor Fee', 'Medicine', 'Injection', 'Lab', 'Radiology'].includes(line.item_type)).reduce((sum, line) => sum + Number(line.amount || 0), 0),
+    grand_total: grandTotal,
+    balance: Math.max(0, grandTotal - Number(paid || 0)),
+  };
+}
+
 function parseEditorJson(value, fallback) {
   if (Array.isArray(value)) return value;
   if (!value) return fallback;
@@ -1842,6 +1939,14 @@ function printInvoice(sale, cart = [], brand = {}) {
   const qr = receiptQrData(sale);
   const html = `<section class="receipt-shell"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p>${sale.customer_name || 'Walk-in Customer'} - ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${item.product_name}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('') : `<tr><td colspan="3">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Total: ${money(sale.total)}</h3><p>Paid: ${money(sale.paid)} | Balance: ${money(sale.balance)}</p><p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
   printHtml(`Invoice ${sale.invoice_number}`, html);
+}
+
+function printHospitalBill(bill, lines = [], brand = {}) {
+  const total = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+  const paid = Number(bill.paid || 0);
+  const rows = lines.map((line) => `<tr><td>${line.description || ''}</td><td>${line.item_type || ''}</td><td>${line.status || 'Completed'}</td><td style="text-align:right">${money(line.amount)}</td></tr>`).join('');
+  const html = `<section class="receipt-shell"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>Hospital Bill ${bill.bill_number || ''}</h2><p>${new Date().toLocaleString()}</p></div></div><p><strong>Patient:</strong> ${bill.patient_name || ''}</p><table><thead><tr><th>Service</th><th>Type</th><th>Status</th><th style="text-align:right">Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No services</td></tr>'}</tbody></table><h3 class="receipt-total">Total: ${money(total)}</h3><p>Paid: ${money(paid)} | Balance: ${money(Math.max(0, total - paid))}</p><p>${brand?.footer || 'Thank you.'}</p></section>`;
+  printHtml(`Hospital Bill ${bill.bill_number || ''}`, html);
 }
 
 function invoicePdfLines(invoice, cart, brand = {}) {

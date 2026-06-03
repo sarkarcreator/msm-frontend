@@ -151,6 +151,18 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .notification-card h3 { @apply mt-1 font-black; }
 .notification-card p { @apply mt-2 text-sm text-black/60 dark:text-white/60; }
 .cart-panel { @apply sticky top-24 self-start; }
+.billing-workflow { @apply grid gap-4 xl:grid-cols-[minmax(0,1fr)_560px]; }
+.billing-panel { @apply xl:sticky xl:top-24 xl:self-start; }
+.billing-lines { @apply grid gap-2; }
+.billing-line { @apply grid items-center gap-3 rounded-2xl border border-black/10 bg-white/70 p-3 dark:border-white/10 dark:bg-black/20 sm:grid-cols-[120px_minmax(0,1fr)_140px]; }
+.billing-line strong { @apply block text-sm font-black; }
+.billing-line small { @apply text-xs font-bold text-black/45 dark:text-white/45; }
+.billing-line input[type="number"] { @apply h-10 min-w-0 rounded-2xl border border-black/10 bg-white px-3 text-sm font-black text-ink outline-none focus:border-mint dark:border-white/10 dark:bg-black/20 dark:text-white; }
+.billing-check { @apply inline-flex items-center gap-2 text-xs font-black text-black/55 dark:text-white/60; }
+.billing-check input { @apply h-4 w-4 accent-mint; }
+.billing-total { @apply mt-4 flex-wrap gap-3; }
+.billing-total label { @apply flex items-center gap-2 text-sm font-black text-black/55 dark:text-white/60; }
+.billing-total input { @apply h-10 w-32 rounded-2xl border border-black/10 bg-white px-3 text-ink outline-none dark:border-white/10 dark:bg-black/20 dark:text-white; }
 .login-page { @apply grid min-h-screen place-items-center bg-paper p-4 text-ink dark:bg-[#182322] dark:text-white; }
 .login-panel { @apply w-full max-w-md rounded-2xl border border-black/10 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-[#182322]; }
 .login-brand { @apply mb-6 flex items-center gap-3; }
