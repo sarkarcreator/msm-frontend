@@ -316,6 +316,9 @@ export async function deleteRecord(store, uuid, mode = 'soft') {
   if (store === 'licenses') {
     await deleteLicenseUsersLocally(db, current.uuid, mode);
   }
+  if (store === 'patients') {
+    await deletePatientWorkflowLocally(db, current.uuid, mode);
+  }
   if (mode === 'permanent') {
     await db.delete(store, uuid);
     if (store === 'licenses') await cleanupLicenseStorage(db);
@@ -328,6 +331,26 @@ export async function deleteRecord(store, uuid, mode = 'soft') {
   if (store === 'licenses') await cleanupLicenseStorage(db);
   await queueOperation(store, uuid, 'delete', deleted);
   await auditLog('soft_delete', store, uuid, deleted);
+}
+
+async function deletePatientWorkflowLocally(db, patientUuid, mode = 'soft') {
+  const stores = ['hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items'];
+  const now = new Date().toISOString();
+  for (const store of stores) {
+    const rows = (await db.getAll(store)).filter((row) => row.patient_uuid === patientUuid);
+    for (const row of rows) {
+      if (mode === 'permanent') {
+        await db.delete(store, row.uuid);
+        await queueOperation(store, row.uuid, 'force_delete', { ...row, permanently_deleted_at: now });
+        await auditLog('permanent_delete', store, row.uuid, row);
+      } else {
+        const deleted = { ...row, deleted_at: now, sync_status: 'pending' };
+        await db.put(store, deleted);
+        await queueOperation(store, row.uuid, 'delete', deleted);
+        await auditLog('soft_delete', store, row.uuid, deleted);
+      }
+    }
+  }
 }
 
 async function deleteLicenseUsersLocally(db, licenseUuid, mode = 'soft') {
@@ -520,11 +543,13 @@ export async function createManualRepairReceipt(record) {
 
 export async function saveHospitalPatientWorkflow(record) {
   const visitDate = record.visit_date || new Date().toISOString().slice(0, 10);
+  const isExisting = Boolean(record.uuid);
+  const tokenNumber = record.token_number || await nextDailyToken('patients', visitDate, record.uuid);
   const patient = await saveRecord('patients', {
     ...record,
-    token_number: record.token_number || await nextDailyToken('patients', visitDate, record.uuid),
+    token_number: tokenNumber,
     mr_number: record.mr_number || await nextNumber('patients', 'MR'),
-    status: record.status || 'Waiting',
+    status: isExisting ? (record.status || 'Sent To Reception') : 'Sent To Reception',
     visit_date: visitDate,
   });
   await clearGeneratedHospitalWorkflow(patient.uuid);
@@ -535,6 +560,7 @@ export async function saveHospitalPatientWorkflow(record) {
   for (const item of prescriptions) {
     const row = await saveRecord('hospital_prescriptions', {
       patient_uuid: patient.uuid,
+      token_number: patient.token_number,
       patient_name: patient.patient_name,
       doctor_name: patient.doctor_name,
       medicine_uuid: item.medicine_uuid || '',
@@ -553,6 +579,7 @@ export async function saveHospitalPatientWorkflow(record) {
     const type = item.order_type || item.type || item.name || item.order_name;
     const order = await saveRecord('hospital_orders', {
       patient_uuid: patient.uuid,
+      token_number: patient.token_number,
       patient_name: patient.patient_name,
       doctor_name: patient.doctor_name,
       order_type: orderType(type),
@@ -564,6 +591,7 @@ export async function saveHospitalPatientWorkflow(record) {
     const taskType = order.order_type;
     await saveRecord(taskType === 'Lab' ? 'lab_reports' : taskType === 'Radiology' ? 'radiology_reports' : 'hospital_tasks', {
       patient_uuid: patient.uuid,
+      token_number: patient.token_number,
       order_uuid: order.uuid,
       patient_name: patient.patient_name,
       task_type: taskType,
@@ -584,6 +612,7 @@ export async function saveHospitalPatientWorkflow(record) {
     const grandTotal = billItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
     const bill = await saveRecord('hospital_bills', {
       patient_uuid: patient.uuid,
+      token_number: patient.token_number,
       bill_number: await nextNumber('hospital_bills', 'HBL'),
       patient_name: patient.patient_name,
       doctor_fee: Number(patient.registration_fee || patient.fee || 0),
@@ -598,7 +627,7 @@ export async function saveHospitalPatientWorkflow(record) {
       status: 'Pending',
     });
     for (const item of billItems) {
-      await saveRecord('hospital_bill_items', { ...item, bill_uuid: bill.uuid, patient_uuid: patient.uuid });
+      await saveRecord('hospital_bill_items', { ...item, bill_uuid: bill.uuid, patient_uuid: patient.uuid, token_number: patient.token_number });
     }
   }
 
@@ -1231,7 +1260,7 @@ async function nextDailyToken(store, date, excludeUuid = '') {
     const numeric = Number(String(row.token_number || '').replace(/\D/g, ''));
     return Number.isFinite(numeric) ? Math.max(highest, numeric) : highest;
   }, 0);
-  return String(max + 1);
+  return `T-${String(max + 1).padStart(6, '0')}`;
 }
 
 async function customerName(uuid) {

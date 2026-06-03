@@ -170,8 +170,8 @@ const RESOURCES = {
     store: 'patients',
     search: ['token_number', 'mr_number', 'patient_name', 'phone', 'cnic', 'doctor_name', 'diagnosis', 'status'],
     columns: ['token_number', 'mr_number', 'patient_name', 'phone', 'age', 'gender', 'department', 'doctor_name', 'visit_type', 'status', 'visit_date'],
-    fields: [['mr_number', 'MR Number'], ['patient_name', 'Patient Name', 'text', true], ['guardian_name', 'Father / Husband Name'], ['phone', 'Mobile'], ['cnic', 'CNIC'], ['gender', 'Gender', 'select', false, ['Male', 'Female', 'Other']], ['age', 'Age', 'number'], ['address', 'Address'], ['emergency_contact', 'Emergency Contact'], ['blood_group', 'Blood Group', 'select', false, ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']], ['visit_type', 'Visit Type', 'select', false, ['OPD', 'Follow-up', 'Emergency', 'Admission']], ['department', 'Department'], ['doctor_name', 'Doctor Selection', 'text', true], ['registration_fee', 'Registration Fee', 'number'], ['assistant_name', 'Assistant / Compounder'], ['symptoms', 'Symptoms'], ['diagnosis', 'Diagnosis'], ['clinical_notes', 'Clinical Notes'], ['vitals', 'Vitals'], ['blood_pressure', 'Blood Pressure'], ['sugar_level', 'Sugar Level'], ['temperature', 'Temperature'], ['weight', 'Weight'], ['prescription_items', 'Smart Prescription', 'prescription'], ['doctor_orders', 'Doctor Orders', 'orders'], ['fee', 'Doctor Fee', 'number'], ['status', 'Status', 'select', true, ['Waiting', 'Checked', 'Follow-up', 'Admitted', 'Discharged']], ['visit_date', 'Visit Date', 'date'], ['next_visit', 'Next Checkup Date', 'date'], ['notes', 'Notes']],
-    defaultRecord: ({ auth, brand }) => ({ status: 'Waiting', visit_type: 'OPD', visit_date: new Date().toISOString().slice(0, 10), doctor_name: currentDoctorName(auth, brand) }),
+    fields: [['mr_number', 'MR Number'], ['patient_name', 'Patient Name', 'text', true], ['guardian_name', 'Father / Husband Name'], ['phone', 'Mobile'], ['cnic', 'CNIC'], ['gender', 'Gender', 'select', false, ['Male', 'Female', 'Other']], ['age', 'Age', 'number'], ['address', 'Address'], ['emergency_contact', 'Emergency Contact'], ['blood_group', 'Blood Group', 'select', false, ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']], ['visit_type', 'Visit Type', 'select', false, ['OPD', 'Follow-up', 'Emergency', 'Admission']], ['department', 'Department'], ['doctor_name', 'Doctor Selection', 'text', true], ['registration_fee', 'Registration Fee', 'number'], ['assistant_name', 'Assistant / Compounder'], ['symptoms', 'Symptoms'], ['diagnosis', 'Diagnosis'], ['clinical_notes', 'Clinical Notes'], ['vitals', 'Vitals'], ['blood_pressure', 'Blood Pressure'], ['sugar_level', 'Sugar Level'], ['temperature', 'Temperature'], ['weight', 'Weight'], ['prescription_items', 'Smart Prescription', 'prescription'], ['doctor_orders', 'Doctor Orders', 'orders'], ['fee', 'Doctor Fee', 'number'], ['status', 'Status', 'select', true, ['Waiting', 'Doctor Checked', 'Sent To Reception', 'Under Treatment', 'Treatment Completed', 'Closed']], ['visit_date', 'Visit Date', 'date'], ['next_visit', 'Next Checkup Date', 'date'], ['notes', 'Notes']],
+    defaultRecord: ({ auth, brand }) => ({ status: 'Sent To Reception', visit_type: 'OPD', visit_date: new Date().toISOString().slice(0, 10), doctor_name: currentDoctorName(auth, brand) }),
     customSave: saveHospitalPatientWorkflow,
   },
   assistants: {
@@ -402,6 +402,14 @@ function App() {
   useEffect(() => {
     if (authenticated) refresh();
   }, [authenticated]);
+
+  useEffect(() => {
+    if (!authenticated) return undefined;
+    const timer = window.setInterval(() => {
+      if (navigator.onLine) refresh();
+    }, 12000);
+    return () => window.clearInterval(timer);
+  }, [authenticated, auth.token]);
 
   useEffect(() => {
     if (authenticated && allowedModules.length && !allowedModules.some((item) => item.id === active)) {
@@ -652,9 +660,10 @@ function HospitalDashboard({ data, auth, brand, refresh }) {
   const assistants = assistantRowsForUser(data.assistants || [], auth, brand);
   const today = new Date().toISOString().slice(0, 10);
   const todayPatients = patients.filter((patient) => String(patient.visit_date || patient.created_at || '').startsWith(today));
-  const checkedPatients = patients.filter((patient) => ['Checked', 'Discharged'].includes(patient.status));
-  const waitingPatients = patients.filter((patient) => ['Waiting', 'Admitted'].includes(patient.status));
-  const currentQueue = patients.filter((patient) => ['Waiting', 'Follow-up', 'Admitted'].includes(patient.status));
+  const completedPatients = patients.filter((patient) => ['Treatment Completed', 'Closed'].includes(patient.status));
+  const waitingPatients = patients.filter((patient) => ['Waiting', 'Doctor Checked', 'Sent To Reception'].includes(patient.status));
+  const underTreatment = patients.filter((patient) => patient.status === 'Under Treatment');
+  const currentQueue = patients.filter((patient) => ['Waiting', 'Doctor Checked', 'Sent To Reception', 'Under Treatment'].includes(patient.status));
   const frontDeskRows = hospitalFrontDeskRole(auth) ? todayPatients : currentQueue;
   const followUps = patients.filter((patient) => patient.next_visit && String(patient.next_visit).slice(0, 10) >= today);
   const feesToday = todayPatients.reduce((sum, patient) => sum + Number(patient.fee || 0), 0);
@@ -669,8 +678,9 @@ function HospitalDashboard({ data, auth, brand, refresh }) {
     ['Doctor', doctor || 'No Doctor', 'text'],
     ['Patients Today', todayPatients.length, false],
     ['Total Patients', patients.length, false],
-    ['Checked Patients', checkedPatients.length, false],
-    ['Waiting / Admitted', waitingPatients.length, false],
+    ['Waiting Tokens', waitingPatients.length, false],
+    ['Under Treatment', underTreatment.length, false],
+    ['Completed', completedPatients.length, false],
     ['Follow Ups', followUps.length, false],
     ['Today Fees', feesToday, true],
     ['Pending Bills', pendingBills.length, false],
@@ -679,13 +689,13 @@ function HospitalDashboard({ data, auth, brand, refresh }) {
   ];
   const newPatient = () => RESOURCES.patients.defaultRecord({ auth, brand });
   async function submitPatient(record) {
-    const saved = await saveRecord('patients', record);
+    const saved = await saveHospitalPatientWorkflow(record);
     runInBackground(() => saveRemoteRecord('patients', saved), 'Patient synced in background');
     setEditingPatient(null);
     await refresh();
-    notify('Patient added successfully');
+    notify(`${saved.token_number || 'Token'} sent to reception`);
   }
-  return <div className="stack"><section className="panel"><div className="module-head"><div><h2>{hospitalFrontDeskRole(auth) ? 'Reception Desk' : 'Patient Desk'}</h2><p className="muted">Daily token queue, doctor recommendations, services and billing workflow.</p></div><div className="module-actions"><button className="primary-btn" onClick={() => setEditingPatient(newPatient())}><Plus size={16} /> Add Patient</button></div></div><DataTable rows={frontDeskRows.slice(0, 8)} columns={['token_number', 'mr_number', 'patient_name', 'phone', 'department', 'doctor_name', 'status']} onAdd={() => setEditingPatient(newPatient())} actions={(row) => <button className="ghost-btn" onClick={() => setEditingPatient(row)}><Edit3 size={15} /> Open File</button>} /></section><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? value : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><section className="split"><DashboardTable title={hospitalFrontDeskRole(auth) ? 'Today Reception Queue' : 'Doctor Queue'} rows={frontDeskRows} cols={['token_number', 'mr_number', 'patient_name', 'visit_type', 'department', 'doctor_name', 'status']} emptyIcon={Users} emptyTitle="No Queue Available" emptyDescription="Doctor or assistant added patients will appear here." /><DashboardTable title="Follow Up Patients" rows={followUps} cols={['patient_name', 'phone', 'diagnosis', 'next_visit', 'status']} emptyIcon={Bell} emptyTitle="No Follow Ups" emptyDescription="Upcoming follow-up patients will appear here." /></section><section className="split"><DashboardTable title="Doctor Prescriptions" rows={data.hospital_prescriptions || []} cols={['patient_name', 'doctor_name', 'medicine_name', 'morning', 'afternoon', 'evening', 'night', 'days', 'status']} emptyIcon={Boxes} emptyTitle="No Pharmacy Tasks" emptyDescription="Doctor prescriptions will appear here." /><DashboardTable title="Doctor Recommended Tests / Services" rows={[...(data.hospital_tasks || []), ...pendingLab, ...pendingRadiology]} cols={['patient_name', 'task_name', 'test_name', 'study_type', 'status']} emptyIcon={FileText} emptyTitle="No Recommended Services" emptyDescription="Injection, X-Ray, lab and other recommendations will appear here." /></section><section className="split"><DashboardTable title="Medicine / Prescription History" rows={medicines} cols={['patient_name', 'medicine', 'medicine_days', 'next_visit', 'diagnosis', 'visit_date']} emptyIcon={FileText} emptyTitle="No Medicine History" emptyDescription="Medicine prescribed to patients will appear here." /><DashboardTable title="Pending Bills" rows={pendingBills} cols={['bill_number', 'patient_name', 'grand_total', 'paid', 'balance', 'status']} emptyIcon={Calculator} emptyTitle="No Pending Bills" emptyDescription="Auto-generated hospital bills will appear here." /></section>{editingPatient && <RecordModal title="Patient Management" fields={RESOURCES.patients.fields} record={editingPatient} context={{ auth, brand, assistants, catalogs: data.master_catalogs || [], medicines: data.medicines || [] }} onClose={() => setEditingPatient(null)} onSubmit={submitPatient} />}</div>;
+  return <div className="stack"><section className="panel"><div className="module-head"><div><h2>{hospitalFrontDeskRole(auth) ? 'Reception Desk' : 'Patient Desk'}</h2><p className="muted">Daily token queue, doctor recommendations, services and billing workflow.</p></div><div className="module-actions"><button className="primary-btn" onClick={() => setEditingPatient(newPatient())}><Plus size={16} /> Add Patient</button></div></div><DataTable rows={frontDeskRows.slice(0, 8)} columns={['token_number', 'mr_number', 'patient_name', 'phone', 'department', 'doctor_name', 'status']} onAdd={() => setEditingPatient(newPatient())} actions={(row) => <button className="ghost-btn" onClick={() => setEditingPatient(row)}><Edit3 size={15} /> Open File</button>} /></section><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? value : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><section className="split"><DashboardTable title={hospitalFrontDeskRole(auth) ? 'Today Reception Queue' : 'Doctor Treatment Status'} rows={frontDeskRows} cols={['token_number', 'mr_number', 'patient_name', 'visit_type', 'department', 'doctor_name', 'status']} emptyIcon={Users} emptyTitle="No Queue Available" emptyDescription="Doctor or assistant added patients will appear here." /><DashboardTable title="Follow Up Patients" rows={followUps} cols={['patient_name', 'phone', 'diagnosis', 'next_visit', 'status']} emptyIcon={Bell} emptyTitle="No Follow Ups" emptyDescription="Upcoming follow-up patients will appear here." /></section><section className="split"><DashboardTable title="Doctor Prescriptions" rows={data.hospital_prescriptions || []} cols={['token_number', 'patient_name', 'doctor_name', 'medicine_name', 'morning', 'afternoon', 'evening', 'night', 'days', 'status']} emptyIcon={Boxes} emptyTitle="No Pharmacy Tasks" emptyDescription="Doctor prescriptions will appear here." /><DashboardTable title="Doctor Recommended Tests / Services" rows={[...(data.hospital_tasks || []), ...pendingLab, ...pendingRadiology]} cols={['token_number', 'patient_name', 'task_name', 'test_name', 'study_type', 'status']} emptyIcon={FileText} emptyTitle="No Recommended Services" emptyDescription="Injection, X-Ray, lab and other recommendations will appear here." /></section><section className="split"><DashboardTable title="Medicine / Prescription History" rows={medicines} cols={['patient_name', 'medicine', 'medicine_days', 'next_visit', 'diagnosis', 'visit_date']} emptyIcon={FileText} emptyTitle="No Medicine History" emptyDescription="Medicine prescribed to patients will appear here." /><DashboardTable title="Pending Bills" rows={pendingBills} cols={['token_number', 'bill_number', 'patient_name', 'grand_total', 'paid', 'balance', 'status']} emptyIcon={Calculator} emptyTitle="No Pending Bills" emptyDescription="Auto-generated hospital bills will appear here." /></section>{editingPatient && <RecordModal title="Patient Management" fields={RESOURCES.patients.fields} record={editingPatient} context={{ auth, brand, assistants, catalogs: data.master_catalogs || [], medicines: data.medicines || [] }} onClose={() => setEditingPatient(null)} onSubmit={submitPatient} />}</div>;
 }
 
 function currentDoctorName(auth, brand) {
@@ -1571,13 +1581,22 @@ function HospitalWorkflow({ title, rows, store, columns, refresh }) {
 
 function HospitalBillingWorkflow({ data, brand, refresh }) {
   const [query, setQuery] = useState('');
+  const [tokenQuery, setTokenQuery] = useState('');
   const [selectedUuid, setSelectedUuid] = useState('');
-  const bills = data.hospital_bills || [];
+  const patients = data.patients || [];
+  const patientMap = new Map(patients.map((patient) => [patient.uuid, patient]));
+  const bills = (data.hospital_bills || []).map((bill) => {
+    const patient = patientMap.get(bill.patient_uuid);
+    return { ...bill, token_number: bill.token_number || patient?.token_number || '', diagnosis: patient?.diagnosis || '', instructions: patient?.clinical_notes || patient?.notes || '', patient_status: patient?.status || '' };
+  });
   const billItems = data.hospital_bill_items || [];
   const tasks = hospitalServiceTasks(data);
-  const filteredBills = useMemo(() => filterRows(bills, query, ['bill_number', 'patient_name', 'status']), [bills, query]);
+  const filteredBills = useMemo(() => filterRows(bills, query, ['token_number', 'bill_number', 'patient_name', 'doctor_name', 'diagnosis', 'status', 'patient_status']), [bills, query]);
   const activeBill = bills.find((bill) => bill.uuid === selectedUuid) || filteredBills[0] || null;
   const lines = useMemo(() => activeBill ? hospitalBillLines(activeBill, billItems, tasks) : [], [activeBill, billItems, tasks]);
+  const activePatient = activeBill ? patientMap.get(activeBill.patient_uuid) : null;
+  const prescriptions = activeBill ? (data.hospital_prescriptions || []).filter((row) => row.patient_uuid === activeBill.patient_uuid) : [];
+  const orders = activeBill ? (data.hospital_orders || []).filter((row) => row.patient_uuid === activeBill.patient_uuid) : [];
   const total = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
   const paid = Number(activeBill?.paid || 0);
   const balance = Math.max(0, total - paid);
@@ -1585,6 +1604,19 @@ function HospitalBillingWorkflow({ data, brand, refresh }) {
   useEffect(() => {
     if (!selectedUuid && filteredBills[0]) setSelectedUuid(filteredBills[0].uuid);
   }, [filteredBills.length, selectedUuid]);
+
+  useEffect(() => {
+    const value = tokenQuery.trim().toLowerCase();
+    if (!value) return;
+    const match = bills.find((bill) => String(bill.token_number || '').toLowerCase() === value);
+    if (match) setSelectedUuid(match.uuid);
+  }, [tokenQuery, bills]);
+
+  async function updatePatientStatus(status) {
+    if (!activePatient) return;
+    const updated = await saveRecord('patients', { ...activePatient, status });
+    runInBackground(() => saveRemoteRecord('patients', updated), 'Patient status synced in background');
+  }
 
   async function updateLine(line, patch) {
     if (line.source === 'item') {
@@ -1594,6 +1626,10 @@ function HospitalBillingWorkflow({ data, brand, refresh }) {
     if (line.task) {
       const updatedTask = await saveRecord(line.task.store, { ...line.task.raw, status: patch.status ?? line.status });
       runInBackground(() => saveRemoteRecord(line.task.store, updatedTask), 'Hospital service synced in background');
+    }
+    if ((patch.status || '').includes('Progress')) await updatePatientStatus('Under Treatment');
+    if (patch.status === 'Completed' && lines.every((item) => item.uuid === line.uuid || !item.task || item.status === 'Completed')) {
+      await updatePatientStatus('Treatment Completed');
     }
     await refresh();
   }
@@ -1614,22 +1650,35 @@ function HospitalBillingWorkflow({ data, brand, refresh }) {
   }
 
   async function completeAll() {
-    for (const line of lines) await updateLine(line, { status: 'Completed' });
+    for (const line of lines) {
+      if (line.task) {
+        const updatedTask = await saveRecord(line.task.store, { ...line.task.raw, status: 'Completed' });
+        runInBackground(() => saveRemoteRecord(line.task.store, updatedTask), 'Hospital service synced in background');
+      }
+    }
+    await updatePatientStatus('Treatment Completed');
     await saveBill();
+    notify(`${activeBill?.token_number || 'Token'} marked treated`);
+  }
+
+  async function closeCase() {
+    await updatePatientStatus('Closed');
+    await refresh();
+    notify(`${activeBill?.token_number || 'Token'} closed`);
   }
 
   if (!activeBill) {
-    return <section className="panel"><ModuleHeader title="Hospital Billing" query={query} setQuery={setQuery} onAdd={null} onExport={() => exportCsv('hospital-bills.csv', filteredBills)} onPrint={() => printTable('Hospital Billing', filteredBills, ['bill_number', 'patient_name', 'grand_total', 'paid', 'balance', 'status'])} /><DashboardEmpty icon={Calculator} title="No Pending Bills" description="Doctor recommendations and patient bills will appear here automatically." /></section>;
+    return <section className="panel"><ModuleHeader title="Hospital Billing" query={query} setQuery={setQuery} onAdd={null} onExport={() => exportCsv('hospital-bills.csv', filteredBills)} onPrint={() => printTable('Hospital Billing', filteredBills, ['token_number', 'bill_number', 'patient_name', 'grand_total', 'paid', 'balance', 'status'])} /><DashboardEmpty icon={Calculator} title="No Pending Bills" description="Doctor recommendations and patient bills will appear here automatically." /></section>;
   }
 
-  return <div className="billing-workflow"><section className="panel"><ModuleHeader title="Hospital Billing" query={query} setQuery={setQuery} onAdd={null} onExport={() => exportCsv('hospital-bills.csv', filteredBills)} onPrint={() => printHospitalBill(activeBill, lines, brand)} /><DataTable rows={filteredBills} columns={['bill_number', 'patient_name', 'doctor_fee', 'grand_total', 'paid', 'balance', 'status']} actions={(row) => <button className="ghost-btn" onClick={() => setSelectedUuid(row.uuid)}>Open</button>} /></section><section className="panel billing-panel"><div className="module-head"><div><h2>{activeBill.patient_name}</h2><p className="muted">{activeBill.bill_number} - Doctor recommendations, service completion and final bill.</p></div><div className="module-actions"><button className="ghost-btn" onClick={completeAll}>Mark All Done</button><button className="ghost-btn" onClick={() => printHospitalBill(activeBill, lines, brand)}><Printer size={16} /> Print Bill</button><button className="primary-btn" onClick={() => saveBill()}>Save Bill</button></div></div><div className="billing-lines">{lines.map((line) => <div className="billing-line" key={line.uuid}><label className="billing-check"><input type="checkbox" disabled={!line.task} checked={line.status === 'Completed'} onChange={(e) => updateLine(line, { status: e.target.checked ? 'Completed' : 'Pending' })} /><span>{line.task ? (line.status === 'Completed' ? 'Done' : 'Pending') : 'Added'}</span></label><div><strong>{line.description}</strong><small>{line.item_type}</small></div><input type="number" min="0" defaultValue={line.amount || 0} onBlur={(e) => updateLine(line, { amount: Number(e.target.value) })} /></div>)}</div><div className="totals billing-total"><span>Total <strong>{money(total)}</strong></span><label>Paid<input type="number" min="0" defaultValue={activeBill.paid || 0} onBlur={(e) => saveBill({ paid: Number(e.target.value) })} /></label><span>Balance <strong>{money(balance)}</strong></span></div></section></div>;
+  return <div className="billing-workflow"><section className="panel"><ModuleHeader title="Hospital Billing" query={query} setQuery={setQuery} onAdd={null} onExport={() => exportCsv('hospital-bills.csv', filteredBills)} onPrint={() => printHospitalBill(activeBill, lines, brand)} /><div className="token-search"><label>Search Token<input value={tokenQuery} onChange={(e) => setTokenQuery(e.target.value)} placeholder="T-000025" /></label><span>{activeBill.token_number || 'No token selected'}</span></div><DataTable rows={filteredBills} columns={['token_number', 'bill_number', 'patient_name', 'patient_status', 'grand_total', 'paid', 'balance', 'status']} actions={(row) => <button className="ghost-btn" onClick={() => setSelectedUuid(row.uuid)}>Open</button>} /></section><section className="panel billing-panel"><div className="module-head"><div><h2>{activeBill.token_number} - {activeBill.patient_name}</h2><p className="muted">{activeBill.bill_number} - {activePatient?.doctor_name || 'Doctor'} recommendations, completion and final bill.</p></div><div className="module-actions"><button className="ghost-btn" onClick={completeAll}>Mark Treated</button><button className="ghost-btn" onClick={closeCase}>Close Case</button><button className="ghost-btn" onClick={() => printHospitalBill(activeBill, lines, brand)}><Printer size={16} /> Print Bill</button><button className="primary-btn" onClick={() => saveBill()}>Save Bill</button></div></div><div className="patient-summary"><div><span>Diagnosis</span><strong>{activePatient?.diagnosis || 'No diagnosis'}</strong></div><div><span>Instructions</span><strong>{activePatient?.clinical_notes || activePatient?.notes || 'No instructions'}</strong></div><div><span>Doctor</span><strong>{activePatient?.doctor_name || '-'}</strong></div><div><span>Status</span><strong>{activePatient?.status || activeBill.patient_status || '-'}</strong></div></div><section className="split compact-split"><DashboardTable title="Prescription" rows={prescriptions} cols={['medicine_name', 'morning', 'afternoon', 'evening', 'night', 'days', 'status']} emptyIcon={Boxes} emptyTitle="No Medicines" emptyDescription="Doctor medicines will show here." /><DashboardTable title="Doctor Orders" rows={orders} cols={['order_type', 'order_name', 'charges', 'status']} emptyIcon={FileText} emptyTitle="No Orders" emptyDescription="Doctor tests and services will show here." /></section><div className="billing-lines">{lines.map((line) => <div className="billing-line" key={line.uuid}><label className="billing-check"><span>{line.task ? 'Task' : 'Added'}</span><select disabled={!line.task} value={line.status} onChange={(e) => updateLine(line, { status: e.target.value })}><option>Pending</option><option>In Progress</option><option>Completed</option></select></label><div><strong>{line.description}</strong><small>{line.item_type}</small></div><input type="number" min="0" defaultValue={line.amount || 0} onBlur={(e) => updateLine(line, { amount: Number(e.target.value) })} /></div>)}</div><div className="totals billing-total"><span>Total <strong>{money(total)}</strong></span><label>Paid<input type="number" min="0" defaultValue={activeBill.paid || 0} onBlur={(e) => saveBill({ paid: Number(e.target.value) })} /></label><span>Balance <strong>{money(balance)}</strong></span></div></section></div>;
 }
 
 function hospitalServiceTasks(data) {
   return [
-    ...(data.hospital_tasks || []).map((row) => ({ store: 'hospital_tasks', raw: row, patient_uuid: row.patient_uuid, name: row.task_name, type: row.task_type, status: row.status })),
-    ...(data.lab_reports || []).map((row) => ({ store: 'lab_reports', raw: row, patient_uuid: row.patient_uuid, name: row.test_name, type: 'Lab', status: row.status })),
-    ...(data.radiology_reports || []).map((row) => ({ store: 'radiology_reports', raw: row, patient_uuid: row.patient_uuid, name: row.study_type, type: 'Radiology', status: row.status })),
+    ...(data.hospital_tasks || []).map((row) => ({ store: 'hospital_tasks', raw: row, patient_uuid: row.patient_uuid, token_number: row.token_number, name: row.task_name, type: row.task_type, status: row.status })),
+    ...(data.lab_reports || []).map((row) => ({ store: 'lab_reports', raw: row, patient_uuid: row.patient_uuid, token_number: row.token_number, name: row.test_name, type: 'Lab', status: row.status })),
+    ...(data.radiology_reports || []).map((row) => ({ store: 'radiology_reports', raw: row, patient_uuid: row.patient_uuid, token_number: row.token_number, name: row.study_type, type: 'Radiology', status: row.status })),
   ];
 }
 

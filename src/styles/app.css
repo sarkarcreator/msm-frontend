@@ -158,11 +158,21 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .billing-line strong { @apply block text-sm font-black; }
 .billing-line small { @apply text-xs font-bold text-black/45 dark:text-white/45; }
 .billing-line input[type="number"] { @apply h-10 min-w-0 rounded-2xl border border-black/10 bg-white px-3 text-sm font-black text-ink outline-none focus:border-mint dark:border-white/10 dark:bg-black/20 dark:text-white; }
-.billing-check { @apply inline-flex items-center gap-2 text-xs font-black text-black/55 dark:text-white/60; }
+.billing-check { @apply inline-flex flex-wrap items-center gap-2 text-xs font-black text-black/55 dark:text-white/60; }
 .billing-check input { @apply h-4 w-4 accent-mint; }
+.billing-check select { @apply h-9 rounded-xl border border-black/10 bg-white px-2 text-xs font-black text-ink outline-none focus:border-mint dark:border-white/10 dark:bg-black/20 dark:text-white; }
 .billing-total { @apply mt-4 flex-wrap gap-3; }
 .billing-total label { @apply flex items-center gap-2 text-sm font-black text-black/55 dark:text-white/60; }
 .billing-total input { @apply h-10 w-32 rounded-2xl border border-black/10 bg-white px-3 text-ink outline-none dark:border-white/10 dark:bg-black/20 dark:text-white; }
+.token-search { @apply mb-4 flex flex-wrap items-end justify-between gap-3 rounded-2xl border border-black/10 bg-white/60 p-3 dark:border-white/10 dark:bg-white/5; }
+.token-search label { @apply grid gap-1 text-xs font-black text-black/55 dark:text-white/60; }
+.token-search input { @apply h-11 w-52 rounded-2xl border border-black/10 bg-white px-4 text-sm font-black uppercase text-ink outline-none focus:border-mint dark:border-white/10 dark:bg-black/20 dark:text-white; }
+.token-search span { @apply rounded-2xl bg-mint/10 px-4 py-2 text-sm font-black text-mint; }
+.patient-summary { @apply mb-4 grid gap-3 md:grid-cols-2; }
+.patient-summary div { @apply rounded-2xl border border-black/10 bg-white/60 p-3 dark:border-white/10 dark:bg-white/5; }
+.patient-summary span { @apply block text-xs font-bold text-black/45 dark:text-white/45; }
+.patient-summary strong { @apply mt-1 block text-sm font-black; }
+.compact-split { @apply mb-4; }
 .login-page { @apply grid min-h-screen place-items-center bg-paper p-4 text-ink dark:bg-[#182322] dark:text-white; }
 .login-panel { @apply w-full max-w-md rounded-2xl border border-black/10 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-[#182322]; }
 .login-brand { @apply mb-6 flex items-center gap-3; }
