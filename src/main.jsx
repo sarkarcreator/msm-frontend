@@ -450,12 +450,12 @@ function App() {
           {active === 'purchases' && <Purchases data={data} refresh={refresh} />}
           {active === 'suppliers' && <CrudModule config={RESOURCES.suppliers} rows={data.suppliers || []} refresh={refresh} extraActions={(row) => <button className="ghost-btn" onClick={() => printLedger(row, data.supplier_ledgers || [], 'supplier_uuid')}><Printer size={15} /> Ledger</button>} />}
           {active === 'expenses' && <CrudModule config={RESOURCES.expenses} rows={data.expenses || []} refresh={refresh} />}
-          {active === 'notifications' && <Notifications data={data} refresh={refresh} />}
+          {active === 'notifications' && <Notifications data={data} refresh={refresh} auth={auth} />}
           {active === 'accounting' && <Accounting data={data} refresh={refresh} />}
           {active === 'reports' && <Reports refreshKey={refreshKey} />}
           {active === 'catalog' && <CatalogModule rows={data.master_catalogs || []} products={data.products || []} brand={brand} refresh={refresh} />}
           {active === 'backup' && <BackupModule data={data} auth={auth} brand={brand} refresh={refresh} />}
-          {active === 'users' && <CrudModule config={RESOURCES.users} rows={data.users || []} refresh={refresh} context={{ auth, brand }} />}
+          {active === 'users' && <CrudModule config={RESOURCES.users} rows={usersForRole(data.users || [], auth)} refresh={refresh} context={{ auth, brand }} />}
           {active === 'patients' && <CrudModule config={RESOURCES.patients} rows={patientRowsForUser(data.patients || [], auth, brand)} refresh={refresh} context={{ auth, brand, assistants: assistantRowsForUser(data.assistants || [], auth, brand), catalogs: data.master_catalogs || [] }} />}
           {active === 'assistants' && <CrudModule config={RESOURCES.assistants} rows={assistantRowsForUser(data.assistants || [], auth, brand)} refresh={refresh} context={{ auth, brand }} />}
           {active === 'licenses' && <LicenseManager rows={data.licenses || []} refresh={refresh} />}
@@ -535,6 +535,7 @@ function inventoryRows(rows) {
 }
 
 function Dashboard({ snapshot, data, brand, auth, refresh }) {
+  if (auth?.role === 'Super Admin') return <SuperAdminDashboard data={data} refresh={refresh} />;
   if (brand?.business_type === 'Hospital') return <HospitalDashboard data={data} auth={auth} brand={brand} refresh={refresh} />;
   const cards = [
     ['Today Orders', snapshot?.todayOrders, false], ['Today Repairs', snapshot?.todayRepairs, false], ['Monthly Profit', snapshot?.monthlyProfit],
@@ -550,6 +551,25 @@ function Dashboard({ snapshot, data, brand, auth, refresh }) {
   const pendingRepairs = [...(data.repairs || []), ...(data.manual_repair_receipts || [])].filter((row) => !['Delivered', 'Completed'].includes(row.status));
   const max = Math.max(...sales.slice(0, 8).map((sale) => Number(sale.total)), 1);
   return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? (value || 'No Data Available') : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div>{showWalletDashboard && <WalletDashboard wallets={wallets} />}<section className="panel"><div className="module-head"><h2>Sales Performance</h2><span className="shortcut-pill"><BarChart3 size={15} /> Last {Math.min(sales.length, 8)} invoices</span></div>{sales.length ? <SalesChart sales={sales} max={max} /> : <DashboardEmpty icon={BarChart3} title="No Sales Data Available" description="Start creating sales to see analytics." />}</section><section className="split"><DashboardTable title="Top Customers" rows={snapshot?.topCustomers || []} cols={['name', 'phone', 'total_spent', 'balance']} emptyIcon={Users} emptyTitle={customers.length ? 'No Spending History Available' : 'No Customer Data Available'} emptyDescription={customers.length ? 'Customer spend totals will appear after sales are recorded.' : 'Create customers or complete sales to build this leaderboard.'} /><DashboardTable title="Low Stock Alerts" rows={snapshot?.lowStock || []} cols={['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={products.length ? 'All Stock Levels Healthy' : 'No Inventory Data Available'} emptyDescription={products.length ? 'Products below their low stock threshold will appear here.' : 'Add inventory or receive stock from Purchases to enable alerts.'} /></section><section className="split"><DashboardTable title="Recent Sales" rows={snapshot?.recentSales || []} cols={['invoice_number', 'customer_name', 'total', 'paid', 'balance']} emptyIcon={ReceiptText} emptyTitle="No Recent Sales Available" emptyDescription="Completed invoices will appear here automatically." /><DashboardTable title="Pending Repairs" rows={pendingRepairs} cols={['job_number', 'receipt_number', 'customer_name', 'device_name', 'status']} emptyIcon={Wrench} emptyTitle="No Pending Repairs" emptyDescription="Open repair jobs and manual repair receipts will appear here." /></section></div>;
+}
+
+function SuperAdminDashboard({ data }) {
+  const licenses = (data.licenses || []).map(enrichLicense);
+  const activeLicenses = licenses.filter((license) => license.status === 'Active' && license.renewal_state !== 'Expired');
+  const expiredLicenses = licenses.filter((license) => license.renewal_state === 'Expired');
+  const expiringLicenses = licenses.filter((license) => license.renewal_state === 'Renew Soon');
+  const businessRows = Object.entries(licenses.reduce((acc, license) => {
+    const key = license.business_type || 'Unknown';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {})).map(([business_type, total]) => ({ uuid: business_type, business_type, total }));
+  const cards = [
+    ['Total Licenses', licenses.length, false],
+    ['Active Licenses', activeLicenses.length, false],
+    ['Expiring Soon', expiringLicenses.length, false],
+    ['Expired Licenses', expiredLicenses.length, false],
+  ];
+  return <div className="stack"><div className="metric-grid">{cards.map(([label, value]) => <div className="metric animated" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div><section className="split"><DashboardTable title="License Users" rows={licenses.slice(0, 10)} cols={['owner_name', 'business_type', 'type', 'status', 'expiry_date', 'days_left']} emptyIcon={KeyRound} emptyTitle="No License Data Available" emptyDescription="Generated and activated licenses will appear here." /><DashboardTable title="Business Type Summary" rows={businessRows} cols={['business_type', 'total']} emptyIcon={BarChart3} emptyTitle="No Business Data Available" emptyDescription="License business categories will appear here automatically." /></section><DashboardTable title="Renewal Alerts" rows={expiringLicenses} cols={['owner_name', 'business_type', 'expiry_date', 'days_left', 'renewal_state']} emptyIcon={Bell} emptyTitle="No Renewals Due" emptyDescription="Licenses with 30 days or less remaining will appear here." /></div>;
 }
 
 function HospitalDashboard({ data, auth, brand, refresh }) {
@@ -1058,16 +1078,17 @@ function ProductLine({ products, onAdd }) {
   return <div className="inline-form"><select value={line.product_uuid} onChange={(e) => setLine({ ...line, product_uuid: e.target.value })}><option value="">Product</option>{products.map((item) => <option key={item.uuid} value={item.uuid}>{item.product_name}</option>)}</select><input type="number" value={line.quantity} onChange={(e) => setLine({ ...line, quantity: e.target.value })} /><input type="number" value={line.cost_price} onChange={(e) => setLine({ ...line, cost_price: e.target.value })} /><button className="ghost-btn" onClick={() => product && onAdd({ ...line, product_name: product.product_name })}><Plus size={15} /> Add</button></div>;
 }
 
-function Notifications({ data, refresh }) {
+function Notifications({ data, refresh, auth }) {
   const [items, setItems] = useState([]);
   useEffect(() => { notificationCenter().then(setItems); }, [data]);
+  const visibleItems = auth?.role === 'Super Admin' ? items.filter((item) => item.type === 'License Renewal') : items;
   async function dismiss(item) {
     if (!String(item.uuid).includes('-')) await deleteEverywhere('notifications', item, 'soft');
     await saveRecord('notifications', { uuid: crypto.randomUUID(), title: item.title, body: item.body, type: item.type, dismissed_source: item.uuid, deleted_at: new Date().toISOString() });
     await refresh?.();
     setItems((current) => current.filter((row) => row.uuid !== item.uuid));
   }
-  return <section className="panel"><div className="module-head"><h2>Notification Center</h2><span className="status-pill ok"><Bell size={15} /> {items.length} active</span></div>{items.length ? <div className="notification-grid">{items.map((item) => <article key={item.uuid} className={`notification-card ${item.priority || ''}`}><strong>{item.type}</strong><h3>{item.title}</h3><p>{item.body}</p><button className="danger-btn" onClick={() => dismiss(item)}><Trash2 size={15} /> Delete</button></article>)}</div> : <EmptyRows />}</section>;
+  return <section className="panel"><div className="module-head"><h2>Notification Center</h2><span className="status-pill ok"><Bell size={15} /> {visibleItems.length} active</span></div>{visibleItems.length ? <div className="notification-grid">{visibleItems.map((item) => <article key={item.uuid} className={`notification-card ${item.priority || ''}`}><strong>{item.type}</strong><h3>{item.title}</h3><p>{item.body}</p><button className="danger-btn" onClick={() => dismiss(item)}><Trash2 size={15} /> Delete</button></article>)}</div> : <EmptyRows />}</section>;
 }
 
 function SettingsPanel({ brand, rows, refresh }) {
@@ -1092,7 +1113,7 @@ function SettingsPanel({ brand, rows, refresh }) {
 }
 
 function LicenseManager({ rows, refresh }) {
-  const licenseColumns = ['license_key', 'activation_code', 'owner_name', 'business_type', 'device_id', 'type', 'status', 'expiry_date'];
+  const licenseColumns = ['license_key', 'activation_code', 'owner_name', 'business_type', 'device_id', 'type', 'status', 'expiry_date', 'days_left', 'renewal_state'];
   const newLicenseForm = () => ({ owner_name: '', business_type: 'Mobile Shop', device_id: ensureDeviceId(), type: '1 Month', status: 'Active' });
   const [form, setForm] = useState(newLicenseForm);
   const [status, setStatus] = useState(null);
@@ -1101,13 +1122,15 @@ function LicenseManager({ rows, refresh }) {
   const [viewing, setViewing] = useState(null);
   const [query, setQuery] = useState('');
   useEffect(() => { activeLicenseStatus().then(setStatus); }, [rows]);
-  const filtered = useMemo(() => filterRows(rows, query, licenseColumns), [rows, query]);
+  const licenseRows = useMemo(() => rows.map(enrichLicense), [rows]);
+  const filtered = useMemo(() => filterRows(licenseRows, query, licenseColumns), [licenseRows, query]);
   async function submit(e) {
     e.preventDefault();
     try {
       if (form.uuid) {
-        await saveRecord('licenses', form);
-        await saveRemoteRecord('licenses', form);
+        const payload = { ...form };
+        await saveRecord('licenses', payload);
+        await saveRemoteRecord('licenses', payload);
       } else {
         const license = await generateLicense(form);
         await saveRemoteRecord('licenses', license, { forceCreate: true });
@@ -1125,6 +1148,13 @@ function LicenseManager({ rows, refresh }) {
     setDeleting(null);
     await refresh();
     notify('License deleted successfully');
+  }
+  async function renew(row, type = row.type || '1 Month') {
+    const renewed = { ...row, type, status: 'Active', expiry_date: licenseExpiryForType(type, row.expiry_date), renewed_at: new Date().toISOString() };
+    await saveRecord('licenses', renewed);
+    await saveRemoteRecord('licenses', renewed);
+    await refresh();
+    notify('License renewed successfully');
   }
   return (
     <div className="stack">
@@ -1148,6 +1178,7 @@ function LicenseManager({ rows, refresh }) {
             <>
               <button className="ghost-btn" onClick={() => setViewing(row)}>View</button>
               <button className="ghost-btn" onClick={() => { setForm({ ...row, business_type: row.business_type || 'Mobile Shop', device_id: row.device_id || ensureDeviceId() }); setCreating(true); }}><Edit3 size={15} /> Edit</button>
+              <button className="ghost-btn" onClick={() => renew(row)}><KeyRound size={15} /> Renew</button>
               <button className="ghost-btn" onClick={() => downloadPdf(`${row.license_key}.pdf`, 'License Certificate', [`License: ${row.license_key}`, `Activation: ${row.activation_code}`, `Owner: ${row.owner_name}`, `Shop Type: ${row.business_type || 'Mobile Shop'}`, `Device: ${row.device_id}`, `Type: ${row.type}`, `Expiry: ${row.expiry_date}`])}><FileDown size={15} /> PDF</button>
               <button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button>
             </>
@@ -1169,6 +1200,7 @@ function LicenseManager({ rows, refresh }) {
                 <label>Device Binding<input value={form.device_id || ensureDeviceId()} onChange={(e) => setForm({ ...form, device_id: e.target.value })} /></label>
                 <label>License Type<select value={form.type || '1 Month'} onChange={(e) => setForm({ ...form, type: e.target.value })}>{['1 Month', '6 Months', '1 Year', 'Lifetime'].map((item) => <option key={item}>{item}</option>)}</select></label>
                 <label>Status<select value={form.status || 'Active'} onChange={(e) => setForm({ ...form, status: e.target.value })}><option>Active</option><option>Disabled</option></select></label>
+                <label>Expiry Date<input type="date" value={form.expiry_date === 'Lifetime' ? '' : form.expiry_date || ''} onChange={(e) => setForm({ ...form, expiry_date: e.target.value })} /></label>
               </div>
             </div>
             <div className="modal-footer">
@@ -1290,6 +1322,45 @@ function filterRows(rows, query, keys) {
   const value = query.trim().toLowerCase();
   if (!value) return rows;
   return rows.filter((row) => keys.some((key) => String(row[key] || '').toLowerCase().includes(value)));
+}
+
+function usersForRole(rows, auth = {}) {
+  if (auth.role !== 'Super Admin') return rows;
+  return rows.filter((row) => userRole(row) === 'Super Admin');
+}
+
+function licenseExpiryForType(type = '1 Month', currentExpiry = '') {
+  if (type === 'Lifetime') return 'Lifetime';
+  const months = { '1 Month': 1, '6 Months': 6, '1 Year': 12 }[type] || 1;
+  const current = currentExpiry && currentExpiry !== 'Lifetime' ? new Date(currentExpiry) : null;
+  const expiry = current && current.getTime() > Date.now() ? current : new Date();
+  expiry.setMonth(expiry.getMonth() + months);
+  return expiry.toISOString().slice(0, 10);
+}
+
+function licenseDaysLeft(license = {}) {
+  if (!license.expiry_date || license.expiry_date === 'Lifetime') return null;
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(license.expiry_date);
+  end.setHours(0, 0, 0, 0);
+  return Math.ceil((end.getTime() - start.getTime()) / 86400000);
+}
+
+function enrichLicense(license = {}) {
+  const days = licenseDaysLeft(license);
+  const renewalState = license.expiry_date === 'Lifetime'
+    ? 'Lifetime'
+    : days < 0
+      ? 'Expired'
+      : days <= 30
+        ? 'Renew Soon'
+        : 'Active';
+  return {
+    ...license,
+    days_left: license.expiry_date === 'Lifetime' ? 'Lifetime' : `${Math.max(days ?? 0, 0)} days`,
+    renewal_state: renewalState,
+  };
 }
 
 function assistantOptionsForPatient(context = {}) {

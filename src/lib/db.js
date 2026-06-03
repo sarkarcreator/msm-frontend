@@ -578,13 +578,33 @@ export async function dashboardSnapshot() {
 }
 
 export async function notificationCenter() {
-  const [products, sales, repairs, receipts, suppliers, purchases, saved] = await Promise.all([
+  const [products, sales, repairs, receipts, suppliers, purchases, licenses, saved] = await Promise.all([
     listRecords('products'), listRecords('sales'), listRecords('repairs'), listRecords('manual_repair_receipts'),
-    listRecords('suppliers'), listRecords('purchases'), listRecords('notifications'),
+    listRecords('suppliers'), listRecords('purchases'), listRecords('licenses'), listRecords('notifications'),
   ]);
   const dismissed = new Set(saved.map((item) => item.dismissed_source).filter(Boolean));
   const isOpenRepair = (repair) => !['Delivered', 'Completed'].includes(String(repair.status || '').trim());
+  const daysLeft = (license) => {
+    if (!license.expiry_date || license.expiry_date === 'Lifetime') return null;
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(license.expiry_date);
+    end.setHours(0, 0, 0, 0);
+    return Math.ceil((end.getTime() - start.getTime()) / 86400000);
+  };
   const generated = [
+    ...licenses
+      .map((license) => ({ license, days: daysLeft(license) }))
+      .filter(({ license, days }) => license.status === 'Active' && days !== null && days <= 30)
+      .map(({ license, days }) => ({
+        uuid: `license-${license.uuid}`,
+        type: 'License Renewal',
+        title: license.owner_name || license.license_key,
+        body: days < 0
+          ? 'License expired. Please renew your license.'
+          : `${days} days left. Key expire hone wali hai, please renew your license.`,
+        priority: days < 0 ? 'high' : 'medium',
+      })),
     ...products
       .filter((product) => Number(product.quantity || 0) <= Number(product.low_stock_threshold || 3))
       .map((product) => ({ uuid: `low-${product.uuid}`, type: 'Low Stock', title: product.product_name, body: `${product.quantity || 0} units remaining`, priority: 'high' })),
