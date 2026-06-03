@@ -234,6 +234,9 @@ export async function deleteRecord(store, uuid, mode = 'soft') {
   const db = await database();
   const current = await db.get(store, uuid);
   if (!current) return;
+  if (store === 'licenses') {
+    await deleteLicenseUsersLocally(db, current.uuid, mode);
+  }
   if (mode === 'permanent') {
     await db.delete(store, uuid);
     if (store === 'licenses') await cleanupLicenseStorage(db);
@@ -246,6 +249,23 @@ export async function deleteRecord(store, uuid, mode = 'soft') {
   if (store === 'licenses') await cleanupLicenseStorage(db);
   await queueOperation(store, uuid, 'delete', deleted);
   await auditLog('soft_delete', store, uuid, deleted);
+}
+
+async function deleteLicenseUsersLocally(db, licenseUuid, mode = 'soft') {
+  const users = (await db.getAll('users')).filter((user) => user.license_uuid === licenseUuid);
+  const now = new Date().toISOString();
+  for (const user of users) {
+    if (mode === 'permanent') {
+      await db.delete('users', user.uuid);
+      await queueOperation('users', user.uuid, 'force_delete', { ...user, permanently_deleted_at: now });
+      await auditLog('permanent_delete', 'users', user.uuid, user);
+    } else {
+      const deleted = { ...user, deleted_at: now, sync_status: 'pending' };
+      await db.put('users', deleted);
+      await queueOperation('users', user.uuid, 'delete', deleted);
+      await auditLog('soft_delete', 'users', user.uuid, deleted);
+    }
+  }
 }
 
 export async function createSale({ customer_uuid, payment_type, discount, tax, paid, due_date, cart }) {
