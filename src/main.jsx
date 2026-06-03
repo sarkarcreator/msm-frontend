@@ -354,6 +354,7 @@ function App() {
   async function refresh() {
     await cleanupStartupData();
     await hydrateSessionSettings();
+    if (auth.token && navigator.onLine) await syncNow();
     const stores = ['products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items', 'expenses', 'repairs', 'repair_updates', 'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'medicines', 'payments', 'cashbook', 'users', 'settings', 'notifications', 'licenses', 'audit_logs', 'inventory_transactions', 'customer_ledgers', 'supplier_ledgers', 'sync_queue'];
     const entries = await Promise.all(stores.map(async (store) => [store, await listRecords(store)]));
     const currentBrand = await getBrandSettings();
@@ -690,7 +691,7 @@ function HospitalDashboard({ data, auth, brand, refresh }) {
   const newPatient = () => RESOURCES.patients.defaultRecord({ auth, brand });
   async function submitPatient(record) {
     const saved = await saveHospitalPatientWorkflow(record);
-    runInBackground(() => saveRemoteRecord('patients', saved), 'Patient synced in background');
+    await syncNow();
     setEditingPatient(null);
     await refresh();
     notify(`${saved.token_number || 'Token'} sent to reception`);
@@ -768,7 +769,8 @@ function CrudModule({ config, rows, refresh, extraActions, context = {} }) {
   const filtered = useMemo(() => filterRows(displayRows, query, config.search), [displayRows, query, config.search]);
   async function submit(record) {
     const saved = config.customSave ? await config.customSave(record) : await saveRecord(config.store, record);
-    runInBackground(() => saveRemoteRecord(config.store, saved), `${config.title} synced in background`);
+    if (config.store === 'patients') await syncNow();
+    else runInBackground(() => saveRemoteRecord(config.store, saved), `${config.title} synced in background`);
     setEditing(null);
     await refresh();
     notify('Record saved successfully');

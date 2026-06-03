@@ -945,7 +945,7 @@ export async function reportData(type) {
 }
 
 export async function syncNow() {
-  if (!navigator.onLine) return { skipped: true };
+  if (!navigator.onLine || !localStorage.getItem('dsh_token')) return { skipped: true };
   const db = await database();
   const scope = currentScope();
   const pending = (await db.getAll('sync_queue')).filter((item) => {
@@ -954,7 +954,10 @@ export async function syncNow() {
     if (!TENANT_SCOPED_STORES.has(item.entity)) return true;
     return item.data?.license_uuid === scope.license_uuid;
   });
-  if (!pending.length) return { synced: 0 };
+  if (!pending.length) {
+    await pullRemoteChanges();
+    return { synced: 0 };
+  }
   try {
     const response = await fetch(`${API_URL}/sync/push`, {
       method: 'POST',
@@ -976,7 +979,41 @@ export async function syncNow() {
       const current = await db.get(item.entity, item.record_uuid);
       if (current) await db.put(item.entity, { ...current, sync_status: 'synced' });
     }
-    return response.json();
+    const payload = await response.json();
+    await pullRemoteChanges();
+    return payload;
+  } catch (error) {
+    return { error: error.message };
+  }
+}
+
+export async function pullRemoteChanges() {
+  if (!navigator.onLine || !localStorage.getItem('dsh_token')) return { skipped: true };
+  const db = await database();
+  const since = localStorage.getItem('dsh_sync_since') || new Date(Date.now() - 86400000 * 30).toISOString();
+  try {
+    const response = await fetch(`${API_URL}/sync/pull?since=${encodeURIComponent(since)}`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'Sync pull failed');
+    const operations = payload.operations || [];
+    for (const operation of operations) {
+      const store = operation.entity;
+      if (!STORE_NAMES.includes(store)) continue;
+      const recordUuid = operation.uuid || operation.payload?.uuid;
+      if (!recordUuid) continue;
+      if (operation.action === 'force_delete') {
+        await db.delete(store, recordUuid);
+      } else if (operation.action === 'delete') {
+        const current = await db.get(store, recordUuid);
+        if (current) await db.put(store, { ...current, deleted_at: current.deleted_at || operation.updated_at || new Date().toISOString(), sync_status: 'synced' });
+      } else if (operation.payload) {
+        await db.put(store, normalizeNumbers(scopeRecordForSave(store, { ...operation.payload, sync_status: 'synced' })));
+      }
+    }
+    localStorage.setItem('dsh_sync_since', payload.server_time || new Date().toISOString());
+    return { pulled: operations.length };
   } catch (error) {
     return { error: error.message };
   }
