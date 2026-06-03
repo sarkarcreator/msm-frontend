@@ -1040,14 +1040,13 @@ export async function hydrateRemoteStores(stores = []) {
   const db = await database();
   const scope = currentScope();
   let imported = 0;
-  for (const store of stores) {
-    if (!STORE_NAMES.includes(store)) continue;
+  await Promise.all(stores.filter((store) => STORE_NAMES.includes(store)).map(async (store) => {
     try {
       const response = await fetch(`${API_URL}/${apiResourceName(store)}?per_page=1000`, {
         headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) continue;
+      if (!response.ok) return;
       const rows = Array.isArray(payload) ? payload : payload.data || [];
       for (const row of rows) {
         if (!row?.uuid) continue;
@@ -1062,7 +1061,7 @@ export async function hydrateRemoteStores(stores = []) {
     } catch {
       // Keep local data if one remote store is temporarily unavailable.
     }
-  }
+  }));
   return { imported };
 }
 
