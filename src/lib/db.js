@@ -8,6 +8,8 @@ export const STORE_NAMES = [
   'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
   'roles', 'permissions', 'settings', 'notifications', 'inventory_transactions',
   'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants',
+  'hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports',
+  'radiology_reports', 'hospital_bills', 'hospital_bill_items',
   'master_catalogs', 'medicines', 'licenses', 'audit_logs', 'sync_queue',
 ];
 
@@ -16,6 +18,8 @@ const MONEY_FIELDS = new Set([
   'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'subtotal',
   'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit',
   'repair_charges', 'advance_payment', 'remaining_amount', 'mrp', 'tax_percentage',
+  'registration_fee', 'doctor_fee', 'medicine_charges', 'injection_charges',
+  'lab_charges', 'radiology_charges', 'procedure_charges', 'grand_total',
 ]);
 
 const DEFAULT_BRAND = {
@@ -47,11 +51,13 @@ const BUSINESS_SYNC_ENTITIES = new Set([
   'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
   'roles', 'permissions', 'settings', 'notifications', 'inventory_transactions',
   'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants',
+  'hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports',
+  'radiology_reports', 'hospital_bills', 'hospital_bill_items',
   'master_catalogs', 'medicines', 'licenses',
 ]);
 
 export async function database() {
-  return openDB('dsh-production-db', 6, {
+  return openDB('dsh-production-db', 7, {
     upgrade(db) {
       for (const store of STORE_NAMES) {
         if (!db.objectStoreNames.contains(store)) {
@@ -177,6 +183,13 @@ function apiResourceName(resource) {
     inventory_transactions: 'inventory-transactions',
     manual_repair_receipts: 'manual-repair-receipts',
     mobile_wallet_transactions: 'mobile-wallet-transactions',
+    hospital_prescriptions: 'hospital-prescriptions',
+    hospital_orders: 'hospital-orders',
+    hospital_tasks: 'hospital-tasks',
+    lab_reports: 'lab-reports',
+    radiology_reports: 'radiology-reports',
+    hospital_bills: 'hospital-bills',
+    hospital_bill_items: 'hospital-bill-items',
     master_catalogs: 'master-catalogs',
     medicine_categories: 'medicine-categories',
     medicine_manufacturers: 'medicine-manufacturers',
@@ -195,6 +208,13 @@ async function markRecordSynced(resource, uuid) {
     'inventory-transactions': 'inventory_transactions',
     'manual-repair-receipts': 'manual_repair_receipts',
     'mobile-wallet-transactions': 'mobile_wallet_transactions',
+    'hospital-prescriptions': 'hospital_prescriptions',
+    'hospital-orders': 'hospital_orders',
+    'hospital-tasks': 'hospital_tasks',
+    'lab-reports': 'lab_reports',
+    'radiology-reports': 'radiology_reports',
+    'hospital-bills': 'hospital_bills',
+    'hospital-bill-items': 'hospital_bill_items',
     'master-catalogs': 'master_catalogs',
     'medicine-categories': 'medicine_categories',
     'medicine-manufacturers': 'medicine_manufacturers',
@@ -442,6 +462,101 @@ export async function createManualRepairReceipt(record) {
   }
 
   return receipt;
+}
+
+export async function saveHospitalPatientWorkflow(record) {
+  const patient = await saveRecord('patients', {
+    ...record,
+    token_number: record.token_number || await nextNumber('patients', 'TKN'),
+    mr_number: record.mr_number || await nextNumber('patients', 'MR'),
+    status: record.status || 'Waiting',
+    visit_date: record.visit_date || new Date().toISOString().slice(0, 10),
+  });
+  await clearGeneratedHospitalWorkflow(patient.uuid);
+  const prescriptions = parseStructuredList(record.prescription_items || record.medicine);
+  const orders = parseStructuredList(record.doctor_orders || '');
+  const billItems = [];
+
+  for (const item of prescriptions) {
+    const row = await saveRecord('hospital_prescriptions', {
+      patient_uuid: patient.uuid,
+      patient_name: patient.patient_name,
+      doctor_name: patient.doctor_name,
+      medicine_uuid: item.medicine_uuid || '',
+      medicine_name: item.medicine || item.medicine_name || item.name,
+      morning: Number(item.morning || 0),
+      afternoon: Number(item.afternoon || 0),
+      evening: Number(item.evening || 0),
+      night: Number(item.night || 0),
+      days: Number(item.days || 1),
+      status: 'Pending',
+    });
+    billItems.push({ item_type: 'Medicine', description: row.medicine_name, quantity: 1, amount: Number(item.amount || 0) });
+  }
+
+  for (const item of orders) {
+    const type = item.order_type || item.type || item.name || item.order_name;
+    const order = await saveRecord('hospital_orders', {
+      patient_uuid: patient.uuid,
+      patient_name: patient.patient_name,
+      doctor_name: patient.doctor_name,
+      order_type: orderType(type),
+      order_name: item.order_name || item.name || type,
+      charges: Number(item.charges || defaultOrderCharge(type)),
+      status: 'Pending',
+      notes: item.notes || '',
+    });
+    const taskType = order.order_type;
+    await saveRecord(taskType === 'Lab' ? 'lab_reports' : taskType === 'Radiology' ? 'radiology_reports' : 'hospital_tasks', {
+      patient_uuid: patient.uuid,
+      order_uuid: order.uuid,
+      patient_name: patient.patient_name,
+      task_type: taskType,
+      task_name: order.order_name,
+      test_name: taskType === 'Lab' ? order.order_name : undefined,
+      study_type: taskType === 'Radiology' ? order.order_name : undefined,
+      assigned_role: taskRole(taskType),
+      status: 'Pending',
+    });
+    billItems.push({ item_type: taskType, description: order.order_name, quantity: 1, amount: Number(order.charges || 0) });
+  }
+
+  if (Number(patient.registration_fee || patient.fee || 0) > 0) {
+    billItems.unshift({ item_type: 'Doctor Fee', description: 'Consultation / Registration Fee', quantity: 1, amount: Number(patient.registration_fee || patient.fee || 0) });
+  }
+
+  if (billItems.length) {
+    const grandTotal = billItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const bill = await saveRecord('hospital_bills', {
+      patient_uuid: patient.uuid,
+      bill_number: await nextNumber('hospital_bills', 'HBL'),
+      patient_name: patient.patient_name,
+      doctor_fee: Number(patient.registration_fee || patient.fee || 0),
+      medicine_charges: billItems.filter((item) => item.item_type === 'Medicine').reduce((sum, item) => sum + Number(item.amount || 0), 0),
+      injection_charges: billItems.filter((item) => item.item_type === 'Injection').reduce((sum, item) => sum + Number(item.amount || 0), 0),
+      lab_charges: billItems.filter((item) => item.item_type === 'Lab').reduce((sum, item) => sum + Number(item.amount || 0), 0),
+      radiology_charges: billItems.filter((item) => item.item_type === 'Radiology').reduce((sum, item) => sum + Number(item.amount || 0), 0),
+      procedure_charges: billItems.filter((item) => !['Medicine', 'Injection', 'Lab', 'Radiology', 'Doctor Fee'].includes(item.item_type)).reduce((sum, item) => sum + Number(item.amount || 0), 0),
+      grand_total: grandTotal,
+      paid: 0,
+      balance: grandTotal,
+      status: 'Pending',
+    });
+    for (const item of billItems) {
+      await saveRecord('hospital_bill_items', { ...item, bill_uuid: bill.uuid, patient_uuid: patient.uuid });
+    }
+  }
+
+  return patient;
+}
+
+async function clearGeneratedHospitalWorkflow(patientUuid) {
+  for (const store of ['hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items']) {
+    const rows = await listRecords(store);
+    for (const row of rows.filter((item) => item.patient_uuid === patientUuid)) {
+      await deleteRecord(store, row.uuid, 'soft');
+    }
+  }
 }
 
 export async function createPurchase({ supplier_uuid, invoice_number, cart, paid = 0 }) {
@@ -693,10 +808,11 @@ export async function saveBrandSettings(settings) {
 }
 
 export async function reportData(type) {
-  const [sales, saleItems, products, expenses, customers, suppliers, repairs, receipts, purchases, wallets, patients, assistants, medicines] = await Promise.all([
+  const [sales, saleItems, products, expenses, customers, suppliers, repairs, receipts, purchases, wallets, patients, assistants, medicines, prescriptions, labReports, radiologyReports, hospitalBills] = await Promise.all([
     listRecords('sales'), listRecords('sale_items'), listRecords('products'), listRecords('expenses'),
     listRecords('customers'), listRecords('suppliers'), listRecords('repairs'), listRecords('manual_repair_receipts'), listRecords('purchases'),
     listRecords('mobile_wallet_transactions'), listRecords('patients'), listRecords('assistants'), listRecords('medicines'),
+    listRecords('hospital_prescriptions'), listRecords('lab_reports'), listRecords('radiology_reports'), listRecords('hospital_bills'),
   ]);
   const today = new Date().toISOString().slice(0, 10);
   const nearExpiryLimit = Date.now() + 90 * 86400000;
@@ -720,6 +836,16 @@ export async function reportData(type) {
     mobile_wallets: wallets,
     patients,
     assistants,
+    daily_patients: patients.filter((patient) => sameDay(patient.visit_date || patient.created_at)),
+    monthly_patients: patients.filter((patient) => String(patient.visit_date || patient.created_at || '').startsWith(new Date().toISOString().slice(0, 7))),
+    doctor_performance: Object.entries(patients.reduce((acc, patient) => ({ ...acc, [patient.doctor_name || 'Unassigned']: (acc[patient.doctor_name || 'Unassigned'] || 0) + 1 }), {})).map(([doctor_name, patients_count]) => ({ doctor_name, patients_count })),
+    hospital_revenue: hospitalBills,
+    lab_report_summary: labReports,
+    radiology_report_summary: radiologyReports,
+    pharmacy_prescriptions: prescriptions,
+    follow_up_report: patients.filter((patient) => patient.next_visit),
+    pending_bills: hospitalBills.filter((bill) => Number(bill.balance || 0) > 0),
+    top_medicines: Object.entries(prescriptions.reduce((acc, row) => ({ ...acc, [row.medicine_name || 'Unknown']: (acc[row.medicine_name || 'Unknown'] || 0) + 1 }), {})).map(([medicine_name, total]) => ({ medicine_name, total })).sort((a, b) => b.total - a.total).slice(0, 20),
     medicines,
     low_stock_medicines: medicineProducts.filter((product) => Number(product.quantity || 0) <= Number(product.low_stock_threshold || 0)),
     near_expiry_medicines: medicineProducts.filter((product) => product.expiry_date && new Date(product.expiry_date).getTime() >= Date.now() && new Date(product.expiry_date).getTime() <= nearExpiryLimit),
@@ -1088,6 +1214,44 @@ function formatMoney(value) {
 
 function paymentsFilter(rows, type) {
   return rows.filter((row) => row.party_type === type);
+}
+
+function parseStructuredList(value) {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch {
+    return String(value)
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((name) => ({ name, medicine: name, order_name: name }));
+  }
+}
+
+function orderType(value = '') {
+  const text = String(value).toLowerCase();
+  if (['cbc', 'lft', 'rft', 'blood', 'urine', 'lab'].some((word) => text.includes(word))) return 'Lab';
+  if (['x-ray', 'xray', 'ultrasound', 'ct', 'mri', 'radiology'].some((word) => text.includes(word))) return 'Radiology';
+  if (['injection', 'iv', 'drip', 'nebuli'].some((word) => text.includes(word))) return 'Injection';
+  if (['admission'].some((word) => text.includes(word))) return 'Admission';
+  return 'Procedure';
+}
+
+function taskRole(type) {
+  return {
+    Lab: 'Lab Technician',
+    Radiology: 'X-Ray Technician',
+    Injection: 'Nurse',
+    Admission: 'Receptionist',
+  }[type] || 'Assistant';
+}
+
+function defaultOrderCharge(value = '') {
+  const type = orderType(value);
+  return { Lab: 800, Radiology: 1500, Injection: 300, Admission: 0, Procedure: 500 }[type] || 0;
 }
 
 function sameDay(value) {
