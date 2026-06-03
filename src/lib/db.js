@@ -151,7 +151,7 @@ export async function saveRemoteRecord(resource, data, options = {}) {
   const token = localStorage.getItem('dsh_token') || '';
   const uuid = data.uuid;
   const forceCreate = options.forceCreate || false;
-  const payloadData = remotePayload(data);
+  const payloadData = remotePayload(resource, data);
   const apiResource = apiResourceName(resource);
   const request = (method, path = '') => fetch(`${API_URL}/${apiResource}${path}`, {
     method,
@@ -252,9 +252,18 @@ async function markRecordSynced(resource, uuid) {
   if (current) await db.put(entity, { ...current, sync_status: 'synced' });
 }
 
-function remotePayload(data) {
+function remotePayload(resource, data) {
   const { id, created_at, updated_at, deleted_at, sync_status, ...payload } = data;
-  return payload;
+  return sanitizeRemotePayload(resource, payload);
+}
+
+function sanitizeRemotePayload(resource, payload) {
+  const allowed = {
+    hospital_bills: ['uuid', 'license_uuid', 'business_type', 'patient_uuid', 'token_number', 'bill_number', 'patient_name', 'doctor_fee', 'medicine_charges', 'injection_charges', 'lab_charges', 'radiology_charges', 'procedure_charges', 'grand_total', 'paid', 'balance', 'status', 'metadata'],
+    hospital_bill_items: ['uuid', 'license_uuid', 'business_type', 'bill_uuid', 'patient_uuid', 'token_number', 'item_type', 'description', 'quantity', 'amount', 'metadata'],
+  }[resource];
+  if (!allowed) return payload;
+  return Object.fromEntries(Object.entries(payload).filter(([key]) => allowed.includes(key)));
 }
 
 function currentScope() {
@@ -984,7 +993,7 @@ export async function syncNow() {
           uuid: item.record_uuid,
           entity: item.entity,
           action: item.action,
-          data: item.data,
+          data: sanitizeRemotePayload(item.entity, item.data || {}),
           client_updated_at: item.client_updated_at,
         })),
       }),
