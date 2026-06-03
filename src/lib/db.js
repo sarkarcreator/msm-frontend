@@ -153,6 +153,7 @@ export async function saveRemoteRecord(resource, data, options = {}) {
   const forceCreate = options.forceCreate || false;
   const payloadData = remotePayload(resource, data);
   const apiResource = apiResourceName(resource);
+  const shouldPost = forceCreate || data.sync_status === 'pending' || !uuid;
   const request = (method, path = '') => fetch(`${API_URL}/${apiResource}${path}`, {
     method,
     headers: {
@@ -162,7 +163,7 @@ export async function saveRemoteRecord(resource, data, options = {}) {
     },
     body: JSON.stringify(payloadData),
   });
-  let response = await request(uuid && !forceCreate ? 'PUT' : 'POST', uuid && !forceCreate ? `/${uuid}` : '');
+  let response = await request(shouldPost ? 'POST' : 'PUT', shouldPost ? '' : `/${uuid}`);
   if (response.status === 404 && uuid && !forceCreate) {
     response = await request('POST');
   }
