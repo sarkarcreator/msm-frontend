@@ -64,7 +64,7 @@ const ROLE_MODULES = {
   Manager: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports', 'catalog', 'medicines', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling'],
   Cashier: ['dashboard', 'pos', 'sales', 'customers', 'credit', 'mobileWallets', 'repairReceipts', 'notifications'],
   Technician: ['dashboard', 'customers', 'repairs', 'repairReceipts', 'notifications'],
-  Doctor: ['dashboard', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling', 'expenses', 'notifications', 'reports', 'catalog', 'medicines', 'backup'],
+  Doctor: ['dashboard', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'expenses', 'notifications', 'reports', 'catalog', 'medicines', 'backup'],
   Compounder: ['dashboard', 'patients', 'hospitalTasks', 'hospitalPharmacy', 'notifications', 'catalog', 'medicines'],
   Assistant: ['dashboard', 'patients', 'hospitalTasks', 'hospitalPharmacy', 'notifications', 'catalog', 'medicines'],
   Nurse: ['dashboard', 'hospitalTasks', 'patients', 'notifications'],
@@ -1602,7 +1602,13 @@ function HospitalBillingWorkflow({ data, brand, refresh }) {
   const [selectedUuid, setSelectedUuid] = useState('');
   const patients = data.patients || [];
   const patientMap = new Map(patients.map((patient) => [patient.uuid, patient]));
-  const bills = (data.hospital_bills || []).map((bill) => {
+  const actualBills = data.hospital_bills || [];
+  const billedPatients = new Set(actualBills.map((bill) => bill.patient_uuid));
+  const virtualBills = patients
+    .filter((patient) => !billedPatients.has(patient.uuid))
+    .filter((patient) => ['Waiting', 'Doctor Checked', 'Sent To Reception', 'Under Treatment', 'Treatment Completed'].includes(patient.status))
+    .map((patient) => hospitalVirtualBill(patient, data));
+  const bills = [...actualBills, ...virtualBills].map((bill) => {
     const patient = patientMap.get(bill.patient_uuid);
     return { ...bill, token_number: bill.token_number || patient?.token_number || '', diagnosis: patient?.diagnosis || '', instructions: patient?.clinical_notes || patient?.notes || '', patient_status: patient?.status || '' };
   });
@@ -1610,7 +1616,7 @@ function HospitalBillingWorkflow({ data, brand, refresh }) {
   const tasks = hospitalServiceTasks(data);
   const filteredBills = useMemo(() => filterRows(bills, query, ['token_number', 'bill_number', 'patient_name', 'doctor_name', 'diagnosis', 'status', 'patient_status']), [bills, query]);
   const activeBill = bills.find((bill) => bill.uuid === selectedUuid) || filteredBills[0] || null;
-  const lines = useMemo(() => activeBill ? hospitalBillLines(activeBill, billItems, tasks) : [], [activeBill, billItems, tasks]);
+  const lines = useMemo(() => activeBill ? hospitalBillLines(activeBill, billItems, tasks, data) : [], [activeBill, billItems, tasks, data]);
   const activePatient = activeBill ? patientMap.get(activeBill.patient_uuid) : null;
   const total = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
   const paid = Number(activeBill?.paid || 0);
@@ -1634,8 +1640,19 @@ function HospitalBillingWorkflow({ data, brand, refresh }) {
   }
 
   async function updateLine(line, patch) {
+    if (activeBill?.is_virtual) {
+      const effectiveLines = lines.map((item) => item.uuid === line.uuid ? { ...item, amount: patch.amount ?? item.amount, status: patch.status ?? item.status } : item);
+      await materializeHospitalBill(activeBill, effectiveLines);
+      if (line.task && patch.status) {
+        const updatedTask = await saveRecord(line.task.store, { ...line.task.raw, status: patch.status });
+        runInBackground(() => saveRemoteRecord(line.task.store, updatedTask), 'Hospital service synced in background');
+      }
+      await refresh();
+      return;
+    }
+    const realBill = activeBill;
     if (line.source === 'item') {
-      const updated = await saveRecord('hospital_bill_items', { ...line.raw, amount: patch.amount ?? line.amount });
+      const updated = await saveRecord('hospital_bill_items', { ...line.raw, bill_uuid: realBill.uuid, amount: patch.amount ?? line.amount });
       runInBackground(() => saveRemoteRecord('hospital_bill_items', updated), 'Bill item synced in background');
     }
     if (line.task) {
@@ -1651,9 +1668,10 @@ function HospitalBillingWorkflow({ data, brand, refresh }) {
 
   async function saveBill(extra = {}) {
     if (!activeBill) return;
+    const realBill = activeBill.is_virtual ? await materializeHospitalBill(activeBill, lines) : activeBill;
     const nextPaid = Number(extra.paid ?? activeBill.paid ?? 0);
     const updated = await saveRecord('hospital_bills', {
-      ...activeBill,
+      ...realBill,
       ...hospitalBillTotals(lines, nextPaid),
       paid: nextPaid,
       balance: Math.max(0, total - nextPaid),
@@ -1697,7 +1715,27 @@ function hospitalServiceTasks(data) {
   ];
 }
 
-function hospitalBillLines(bill, billItems, tasks) {
+function hospitalVirtualBill(patient, data) {
+  const lines = hospitalVirtualLines(patient, data);
+  const totals = hospitalBillTotals(lines, 0);
+  return {
+    uuid: `virtual-${patient.uuid}`,
+    is_virtual: true,
+    patient_uuid: patient.uuid,
+    token_number: patient.token_number,
+    bill_number: `HBL-${patient.token_number || patient.mr_number || patient.uuid.slice(0, 6)}`,
+    patient_name: patient.patient_name,
+    paid: 0,
+    status: 'Pending',
+    ...totals,
+  };
+}
+
+function hospitalBillLines(bill, billItems, tasks, data = {}) {
+  if (bill.is_virtual) {
+    const patient = (data.patients || []).find((row) => row.uuid === bill.patient_uuid);
+    return patient ? hospitalVirtualLines(patient, data) : [];
+  }
   return billItems
     .filter((item) => item.bill_uuid === bill.uuid)
     .map((item) => {
@@ -1713,6 +1751,41 @@ function hospitalBillLines(bill, billItems, tasks) {
         status: task?.status || 'Added',
       };
     });
+}
+
+function hospitalVirtualLines(patient, data = {}) {
+  const rows = [];
+  const fee = Number(patient.registration_fee || patient.fee || 0);
+  if (fee > 0) rows.push({ uuid: `fee-${patient.uuid}`, source: 'item', item_type: 'Doctor Fee', description: 'Consultation / Registration Fee', amount: fee, status: 'Added', raw: { patient_uuid: patient.uuid, token_number: patient.token_number, item_type: 'Doctor Fee', description: 'Consultation / Registration Fee', quantity: 1, amount: fee } });
+  for (const item of (data.hospital_prescriptions || []).filter((row) => row.patient_uuid === patient.uuid)) {
+    rows.push({ uuid: item.uuid, source: 'item', item_type: 'Medicine', description: item.medicine_name, amount: Number(item.amount || 0), status: 'Added', raw: { patient_uuid: patient.uuid, token_number: patient.token_number, item_type: 'Medicine', description: item.medicine_name, quantity: 1, amount: Number(item.amount || 0) } });
+  }
+  const tasks = hospitalServiceTasks(data).filter((row) => row.patient_uuid === patient.uuid);
+  for (const order of (data.hospital_orders || []).filter((row) => row.patient_uuid === patient.uuid)) {
+    const task = tasks.find((row) => String(row.name || '').toLowerCase() === String(order.order_name || '').toLowerCase());
+    rows.push({ uuid: order.uuid, source: 'item', task, item_type: order.order_type, description: order.order_name, amount: Number(order.charges || 0), status: task?.status || 'Pending', raw: { patient_uuid: patient.uuid, token_number: patient.token_number, item_type: order.order_type, description: order.order_name, quantity: 1, amount: Number(order.charges || 0) } });
+  }
+  return rows;
+}
+
+async function materializeHospitalBill(bill, lines = []) {
+  if (!bill?.is_virtual) return bill;
+  const totals = hospitalBillTotals(lines, Number(bill.paid || 0));
+  const saved = await saveRecord('hospital_bills', {
+    patient_uuid: bill.patient_uuid,
+    token_number: bill.token_number,
+    bill_number: bill.bill_number,
+    patient_name: bill.patient_name,
+    paid: Number(bill.paid || 0),
+    status: bill.status || 'Pending',
+    ...totals,
+  });
+  runInBackground(() => saveRemoteRecord('hospital_bills', saved), 'Hospital bill synced in background');
+  for (const line of lines.filter((item) => item.source === 'item')) {
+    const savedItem = await saveRecord('hospital_bill_items', { ...line.raw, bill_uuid: saved.uuid, patient_uuid: bill.patient_uuid, token_number: bill.token_number, amount: Number(line.amount || 0) });
+    runInBackground(() => saveRemoteRecord('hospital_bill_items', savedItem), 'Bill item synced in background');
+  }
+  return saved;
 }
 
 function hospitalBillTotals(lines, paid = 0) {
