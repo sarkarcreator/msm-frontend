@@ -519,12 +519,13 @@ export async function createManualRepairReceipt(record) {
 }
 
 export async function saveHospitalPatientWorkflow(record) {
+  const visitDate = record.visit_date || new Date().toISOString().slice(0, 10);
   const patient = await saveRecord('patients', {
     ...record,
-    token_number: record.token_number || await nextNumber('patients', 'TKN'),
+    token_number: record.token_number || await nextDailyToken('patients', visitDate, record.uuid),
     mr_number: record.mr_number || await nextNumber('patients', 'MR'),
     status: record.status || 'Waiting',
-    visit_date: record.visit_date || new Date().toISOString().slice(0, 10),
+    visit_date: visitDate,
   });
   await clearGeneratedHospitalWorkflow(patient.uuid);
   const prescriptions = parseStructuredList(record.prescription_items || record.medicine);
@@ -1218,6 +1219,19 @@ async function auditLog(action, entity, entity_uuid, record) {
 async function nextNumber(store, prefix) {
   const rows = await listRecords(store);
   return `${prefix}-${String(rows.length + 1).padStart(5, '0')}`;
+}
+
+async function nextDailyToken(store, date, excludeUuid = '') {
+  const day = String(date || new Date().toISOString()).slice(0, 10);
+  const rows = (await listRecords(store)).filter((row) => {
+    if (excludeUuid && row.uuid === excludeUuid) return false;
+    return String(row.visit_date || row.created_at || '').startsWith(day);
+  });
+  const max = rows.reduce((highest, row) => {
+    const numeric = Number(String(row.token_number || '').replace(/\D/g, ''));
+    return Number.isFinite(numeric) ? Math.max(highest, numeric) : highest;
+  }, 0);
+  return String(max + 1);
 }
 
 async function customerName(uuid) {
