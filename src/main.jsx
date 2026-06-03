@@ -430,7 +430,7 @@ function App() {
           {active === 'reports' && <Reports refreshKey={refreshKey} />}
           {active === 'catalog' && <CatalogModule rows={data.master_catalogs || []} products={data.products || []} brand={brand} refresh={refresh} />}
           {active === 'backup' && <BackupModule data={data} auth={auth} brand={brand} refresh={refresh} />}
-          {active === 'users' && <CrudModule config={RESOURCES.users} rows={data.users || []} refresh={refresh} />}
+          {active === 'users' && <CrudModule config={RESOURCES.users} rows={data.users || []} refresh={refresh} context={{ auth, brand }} />}
           {active === 'patients' && <CrudModule config={RESOURCES.patients} rows={patientRowsForUser(data.patients || [], auth, brand)} refresh={refresh} context={{ auth, brand, assistants: assistantRowsForUser(data.assistants || [], auth, brand), catalogs: data.master_catalogs || [] }} />}
           {active === 'assistants' && <CrudModule config={RESOURCES.assistants} rows={assistantRowsForUser(data.assistants || [], auth, brand)} refresh={refresh} context={{ auth, brand }} />}
           {active === 'licenses' && <LicenseManager rows={data.licenses || []} refresh={refresh} />}
@@ -1231,7 +1231,11 @@ function RecordModal({ title, fields, record, onSubmit, onClose, context = {} })
   const label = MODULE_LABELS[title] || title.replace(/Management|System/g, '').trim();
   const assistantOptions = assistantOptionsForPatient(context);
   const medicineOptions = medicineOptionsForPatient(context);
+  const userRoleOptions = roleOptionsForUserForm(context);
   return <ModalShell onClose={onClose}><form onSubmit={(e) => { e.preventDefault(); onSubmit(form); }}><div className="modal-header"><h2>{record.uuid ? `Edit ${label}` : `Add ${label}`}</h2><button type="button" className="icon-btn" onClick={onClose} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid">{fields.map(([key, fieldLabel, type = 'text', required = false, options]) => {
+    if (title === 'User Management' && key === 'role') {
+      return <label key={key}>{fieldLabel}<select required={required} value={form[key] || userRoleOptions[0]} onChange={(e) => change(key, e.target.value)}>{userRoleOptions.map((option) => <option key={option}>{option}</option>)}</select></label>;
+    }
     if (title === 'Patient Management' && key === 'assistant_name') {
       return <label key={key}>{fieldLabel}<select value={form[key] || ''} onChange={(e) => change(key, e.target.value)}><option value="">Select assistant / compounder</option>{assistantOptions.map((option) => <option key={option}>{option}</option>)}</select></label>;
     }
@@ -1270,6 +1274,13 @@ function assistantOptionsForPatient(context = {}) {
     .map((assistant) => assistant.name)
     .filter(Boolean))]
     .sort();
+}
+
+function roleOptionsForUserForm(context = {}) {
+  if (context.auth?.role === 'Super Admin') return ['Super Admin', 'Admin', 'Manager', 'Cashier', 'Technician', 'Doctor', 'Compounder', 'Assistant'];
+  if (context.brand?.business_type === 'Hospital') return ['Doctor', 'Compounder', 'Assistant', 'Manager'];
+  if (context.brand?.business_type === 'Mobile Shop') return ['Manager', 'Cashier', 'Technician'];
+  return ['Manager', 'Cashier'];
 }
 
 function medicineOptionsForPatient(context = {}) {
