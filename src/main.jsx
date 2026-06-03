@@ -16,7 +16,7 @@ import {
   importMedicinesFile, searchMedicines,
   printHtml, quickCustomer, receiptQrData, receiveCustomerPayment,
   reportData, saveBrandSettings, saveRecord, saveRemoteRecord, saveUserAccount, syncNow, hydrateRemoteStores, updateRepairStatus,
-  whatsAppShare, createManualRepairReceipt, saveHospitalPatientWorkflow,
+  whatsAppShare, createManualRepairReceipt, saveHospitalPatientWorkflow, syncHospitalPatientWorkflow,
 } from './lib/db.js';
 import './styles/app.css';
 
@@ -701,7 +701,11 @@ function HospitalDashboard({ data, auth, brand, refresh }) {
   const canCreatePatient = !['Receptionist', 'Billing Officer'].includes(auth?.role || '');
   async function submitPatient(record) {
     const saved = await saveHospitalPatientWorkflow(record);
-    await syncNow();
+    try {
+      await syncHospitalPatientWorkflow(saved.uuid);
+    } catch (error) {
+      notify(error.message || 'Hospital workflow sync failed');
+    }
     setEditingPatient(null);
     await refresh();
     printPatientTokenSlip(saved, brand);
@@ -780,7 +784,7 @@ function CrudModule({ config, rows, refresh, extraActions, context = {} }) {
   const filtered = useMemo(() => filterRows(displayRows, query, config.search), [displayRows, query, config.search]);
   async function submit(record) {
     const saved = config.customSave ? await config.customSave(record) : await saveRecord(config.store, record);
-    if (config.store === 'patients') await syncNow();
+    if (config.store === 'patients') await syncHospitalPatientWorkflow(saved.uuid);
     else runInBackground(() => saveRemoteRecord(config.store, saved), `${config.title} synced in background`);
     setEditing(null);
     await refresh();
@@ -1608,8 +1612,6 @@ function HospitalBillingWorkflow({ data, brand, refresh }) {
   const activeBill = bills.find((bill) => bill.uuid === selectedUuid) || filteredBills[0] || null;
   const lines = useMemo(() => activeBill ? hospitalBillLines(activeBill, billItems, tasks) : [], [activeBill, billItems, tasks]);
   const activePatient = activeBill ? patientMap.get(activeBill.patient_uuid) : null;
-  const prescriptions = activeBill ? (data.hospital_prescriptions || []).filter((row) => row.patient_uuid === activeBill.patient_uuid) : [];
-  const orders = activeBill ? (data.hospital_orders || []).filter((row) => row.patient_uuid === activeBill.patient_uuid) : [];
   const total = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
   const paid = Number(activeBill?.paid || 0);
   const balance = Math.max(0, total - paid);
@@ -1684,7 +1686,7 @@ function HospitalBillingWorkflow({ data, brand, refresh }) {
     return <section className="panel"><ModuleHeader title="Hospital Billing" query={query} setQuery={setQuery} onAdd={null} onExport={() => exportCsv('hospital-bills.csv', filteredBills)} onPrint={() => printTable('Hospital Billing', filteredBills, ['token_number', 'bill_number', 'patient_name', 'grand_total', 'paid', 'balance', 'status'])} /><DashboardEmpty icon={Calculator} title="No Pending Bills" description="Doctor recommendations and patient bills will appear here automatically." /></section>;
   }
 
-  return <div className="billing-workflow"><section className="panel"><ModuleHeader title="Hospital Billing" query={query} setQuery={setQuery} onAdd={null} onExport={() => exportCsv('hospital-bills.csv', filteredBills)} onPrint={() => printHospitalBill(activeBill, lines, brand)} /><div className="token-search"><label>Search Token<input value={tokenQuery} onChange={(e) => setTokenQuery(e.target.value)} placeholder="T-000025" /></label><span>{activeBill.token_number || 'No token selected'}</span></div><DataTable rows={filteredBills} columns={['token_number', 'bill_number', 'patient_name', 'patient_status', 'grand_total', 'paid', 'balance', 'status']} actions={(row) => <button className="ghost-btn" onClick={() => setSelectedUuid(row.uuid)}>Open</button>} /></section><section className="panel billing-panel"><div className="module-head"><div><h2>{activeBill.token_number} - {activeBill.patient_name}</h2><p className="muted">{activeBill.bill_number} - {activePatient?.doctor_name || 'Doctor'} recommendations, completion and final bill.</p></div><div className="module-actions"><button className="ghost-btn" onClick={completeAll}>Mark Treated</button><button className="ghost-btn" onClick={closeCase}>Close Case</button><button className="ghost-btn" onClick={() => printHospitalBill(activeBill, lines, brand)}><Printer size={16} /> Print Bill</button><button className="primary-btn" onClick={() => saveBill()}>Save Bill</button></div></div><div className="patient-summary"><div><span>Diagnosis</span><strong>{activePatient?.diagnosis || 'No diagnosis'}</strong></div><div><span>Instructions</span><strong>{activePatient?.clinical_notes || activePatient?.notes || 'No instructions'}</strong></div><div><span>Doctor</span><strong>{activePatient?.doctor_name || '-'}</strong></div><div><span>Status</span><strong>{activePatient?.status || activeBill.patient_status || '-'}</strong></div></div><section className="split compact-split"><DashboardTable title="Prescription" rows={prescriptions} cols={['medicine_name', 'morning', 'afternoon', 'evening', 'night', 'days', 'status']} emptyIcon={Boxes} emptyTitle="No Medicines" emptyDescription="Doctor medicines will show here." /><DashboardTable title="Doctor Orders" rows={orders} cols={['order_type', 'order_name', 'charges', 'status']} emptyIcon={FileText} emptyTitle="No Orders" emptyDescription="Doctor tests and services will show here." /></section><div className="billing-lines">{lines.map((line) => <div className="billing-line" key={line.uuid}><label className="billing-check"><span>{line.task ? 'Task' : 'Added'}</span><select disabled={!line.task} value={line.status} onChange={(e) => updateLine(line, { status: e.target.value })}><option>Pending</option><option>In Progress</option><option>Completed</option></select></label><div><strong>{line.description}</strong><small>{line.item_type}</small></div><input type="number" min="0" defaultValue={line.amount || 0} onBlur={(e) => updateLine(line, { amount: Number(e.target.value) })} /></div>)}</div><div className="totals billing-total"><span>Total <strong>{money(total)}</strong></span><label>Paid<input type="number" min="0" defaultValue={activeBill.paid || 0} onBlur={(e) => saveBill({ paid: Number(e.target.value) })} /></label><span>Balance <strong>{money(balance)}</strong></span></div></section></div>;
+  return <div className="billing-workflow"><section className="panel"><ModuleHeader title="Hospital Billing" query={query} setQuery={setQuery} onAdd={null} onExport={() => exportCsv('hospital-bills.csv', filteredBills)} onPrint={() => printHospitalBill(activeBill, lines, brand)} /><div className="token-search"><label>Search Token<input value={tokenQuery} onChange={(e) => setTokenQuery(e.target.value)} placeholder="T-000025" /></label><span>{activeBill.token_number || 'No token selected'}</span></div><DataTable rows={filteredBills} columns={['token_number', 'bill_number', 'patient_name', 'patient_status', 'grand_total', 'paid', 'balance', 'status']} actions={(row) => <button className="ghost-btn" onClick={() => setSelectedUuid(row.uuid)}>Open</button>} /></section><section className="panel billing-panel"><div className="module-head"><div><h2>{activeBill.token_number} - {activeBill.patient_name}</h2><p className="muted">{activeBill.bill_number} - {activePatient?.doctor_name || 'Doctor'} recommendations, completion and final bill.</p></div><div className="module-actions"><button className="ghost-btn" onClick={completeAll}>Mark Treated</button><button className="ghost-btn" onClick={closeCase}>Close Case</button><button className="ghost-btn" onClick={() => printHospitalBill(activeBill, lines, brand)}><Printer size={16} /> Print Bill</button><button className="primary-btn" onClick={() => saveBill()}>Save Bill</button></div></div><div className="patient-summary"><div><span>Diagnosis</span><strong>{activePatient?.diagnosis || 'No diagnosis'}</strong></div><div><span>Instructions</span><strong>{activePatient?.clinical_notes || activePatient?.notes || 'No instructions'}</strong></div><div><span>Doctor</span><strong>{activePatient?.doctor_name || '-'}</strong></div><div><span>Status</span><strong>{activePatient?.status || activeBill.patient_status || '-'}</strong></div></div><div className="billing-lines">{lines.map((line) => <div className="billing-line" key={line.uuid}><label className="billing-check"><span>{line.task ? 'Task' : 'Added'}</span>{line.task ? <select value={line.status} onChange={(e) => updateLine(line, { status: e.target.value })}><option>Pending</option><option>In Progress</option><option>Completed</option></select> : <strong>Added</strong>}</label><div><strong>{line.description}</strong><small>{line.item_type}</small></div><input type="number" min="0" defaultValue={line.amount || 0} onBlur={(e) => updateLine(line, { amount: Number(e.target.value) })} /></div>)}</div><div className="totals billing-total"><span>Total <strong>{money(total)}</strong></span><label>Paid<input type="number" min="0" defaultValue={activeBill.paid || 0} onBlur={(e) => saveBill({ paid: Number(e.target.value) })} /></label><span>Balance <strong>{money(balance)}</strong></span></div></section></div>;
 }
 
 function hospitalServiceTasks(data) {
@@ -1708,7 +1710,7 @@ function hospitalBillLines(bill, billItems, tasks) {
         item_type: item.item_type,
         description: item.description,
         amount: Number(item.amount || 0),
-        status: task?.status || 'Completed',
+        status: task?.status || 'Added',
       };
     });
 }

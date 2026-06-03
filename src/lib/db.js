@@ -634,6 +634,22 @@ export async function saveHospitalPatientWorkflow(record) {
   return patient;
 }
 
+export async function syncHospitalPatientWorkflow(patientUuid) {
+  if (!patientUuid || !navigator.onLine || !localStorage.getItem('dsh_token')) return { skipped: true };
+  const patient = await getRecord('patients', patientUuid);
+  if (!patient || patient.deleted_at) return { skipped: true };
+  const stores = ['hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items'];
+  await saveRemoteRecord('patients', patient);
+  for (const store of stores) {
+    const rows = (await listRecords(store)).filter((row) => row.patient_uuid === patientUuid);
+    for (const row of rows) {
+      await saveRemoteRecord(store, row);
+    }
+  }
+  await syncNow();
+  return { synced: true };
+}
+
 async function clearGeneratedHospitalWorkflow(patientUuid) {
   for (const store of ['hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items']) {
     const rows = await listRecords(store);
