@@ -424,7 +424,7 @@ function App() {
           {active === 'accounting' && <Accounting data={data} refresh={refresh} />}
           {active === 'reports' && <Reports refreshKey={refreshKey} />}
           {active === 'catalog' && <CatalogModule rows={data.master_catalogs || []} products={data.products || []} brand={brand} refresh={refresh} />}
-          {active === 'backup' && <BackupModule data={data} auth={auth} refresh={refresh} />}
+          {active === 'backup' && <BackupModule data={data} auth={auth} brand={brand} refresh={refresh} />}
           {active === 'users' && <CrudModule config={RESOURCES.users} rows={data.users || []} refresh={refresh} />}
           {active === 'patients' && <CrudModule config={RESOURCES.patients} rows={patientRowsForUser(data.patients || [], auth, brand)} refresh={refresh} context={{ auth, brand }} />}
           {active === 'assistants' && <CrudModule config={RESOURCES.assistants} rows={assistantRowsForUser(data.assistants || [], auth, brand)} refresh={refresh} context={{ auth, brand }} />}
@@ -700,8 +700,10 @@ function CatalogModule({ rows, products, brand, refresh }) {
   return <div className="stack"><section className="panel"><ModuleHeader title="Master Catalog" query={query} setQuery={setQuery} onAdd={() => setEditing(blank())} onImport={() => importRef.current?.click()} onExport={() => exportCsv('master-catalog.csv', filtered)} onPrint={() => printTable('Master Catalog', filtered, config.columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><div className="module-actions report-actions"><button className="ghost-btn" onClick={seedPresets}><Plus size={16} /> Add Starter Catalog</button><button className="ghost-btn" onClick={downloadCatalogTemplate}><Download size={16} /> CSV Template</button><span className="shortcut-pill">{brand?.business_type || 'General Store'} catalog: {filtered.length} shown / {importedCount} total / {presetCount} starter</span></div><DataTable rows={filtered} columns={config.columns} onAdd={() => setEditing(blank())} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => addToInventory(row)}><Boxes size={15} /> Inventory</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Catalog Detail" row={viewing} columns={config.columns} onClose={() => setViewing(null)} />}{editing && <RecordModal title="Master Catalog" fields={config.fields} record={editing} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store="master_catalogs" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
-function BackupModule({ data, auth, refresh }) {
+function BackupModule({ data, auth, brand, refresh }) {
   const restoreRef = useRef(null);
+  const businessType = brand?.business_type || 'General Store';
+  const isHospital = businessType === 'Hospital';
   const patients = data?.patients || [];
   const products = data?.products || [];
   const customers = data?.customers || [];
@@ -720,11 +722,14 @@ function BackupModule({ data, auth, refresh }) {
   }
   const patientColumns = ['patient_name', 'phone', 'age', 'gender', 'doctor_name', 'assistant_name', 'symptoms', 'diagnosis', 'medicine', 'medicine_days', 'next_visit', 'fee', 'status', 'visit_date', 'notes'];
   const patientRows = patients.map((patient) => Object.fromEntries(patientColumns.map((column) => [column, patient[column] ?? ''])));
-  const backupStores = backupStoresForRole(auth?.role);
+  const backupStores = backupStoresForBusiness(auth?.role, businessType);
+  const countCards = isHospital
+    ? [['Patients', patients.length], ['Assistants', (data?.assistants || []).length], ['Expenses', (data?.expenses || []).length], ['Reports', patients.length]]
+    : [['Inventory', products.length], ['Customers', customers.length], ['Sales', sales.length], ['Suppliers', (data?.suppliers || []).length]];
   const backupDescription = auth?.role === 'Super Admin'
     ? 'Full platform backup includes licenses, settings and admin records.'
-    : 'Business backup includes this client shop data only. Licenses and Super Admin control data are excluded.';
-  return <div className="stack"><section className="panel"><div className="module-head"><h2>Backup & Restore</h2><div className="module-actions"><button className="primary-btn" onClick={() => exportBackupFile(`msm-full-data-backup-${new Date().toISOString().slice(0, 10)}.json`, backupStores)}><Download size={16} /> Full Data Backup</button><button className="ghost-btn" onClick={() => restoreRef.current?.click()}><Upload size={16} /> Restore Backup</button></div></div><input ref={restoreRef} className="hidden-input" type="file" accept=".json" onChange={restore} /><div className="metric-grid"><div className="metric"><span>Patients</span><strong>{patients.length}</strong></div><div className="metric"><span>Inventory</span><strong>{products.length}</strong></div><div className="metric"><span>Customers</span><strong>{customers.length}</strong></div><div className="metric"><span>Sales</span><strong>{sales.length}</strong></div></div><div className="dashboard-empty"><Download size={34} /><strong>{auth?.role === 'Super Admin' ? 'Complete platform backup' : 'Complete business data backup'}</strong><p>{backupDescription}</p></div></section><section className="panel"><div className="module-head"><h2>Patients Backup</h2><div className="module-actions"><button className="ghost-btn" onClick={() => exportCsv(`patients-backup-${new Date().toISOString().slice(0, 10)}.csv`, patientRows)}><Download size={16} /> Export Patients CSV</button><button className="ghost-btn" onClick={() => printTable('Patients Backup', patients, patientColumns)}><Printer size={16} /> Print Patients</button></div></div><DataTable rows={patients.slice(0, 10)} columns={patientColumns.slice(0, 10)} /></section></div>;
+    : `${businessType} backup includes only this registered business data. Other portal data, licenses and Super Admin control data are excluded.`;
+  return <div className="stack"><section className="panel"><div className="module-head"><h2>{businessType} Backup & Restore</h2><div className="module-actions"><button className="primary-btn" onClick={() => exportBackupFile(`${businessType.toLowerCase().replaceAll(' ', '-')}-backup-${new Date().toISOString().slice(0, 10)}.json`, backupStores)}><Download size={16} /> {businessType} Backup</button><button className="ghost-btn" onClick={() => restoreRef.current?.click()}><Upload size={16} /> Restore Backup</button></div></div><input ref={restoreRef} className="hidden-input" type="file" accept=".json" onChange={restore} /><div className="metric-grid">{countCards.map(([label, value]) => <div className="metric" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div><div className="dashboard-empty"><Download size={34} /><strong>{auth?.role === 'Super Admin' ? 'Complete platform backup' : `${businessType} business backup`}</strong><p>{backupDescription}</p></div></section>{isHospital && <section className="panel"><div className="module-head"><h2>Patients Backup</h2><div className="module-actions"><button className="ghost-btn" onClick={() => exportCsv(`patients-backup-${new Date().toISOString().slice(0, 10)}.csv`, patientRows)}><Download size={16} /> Export Patients CSV</button><button className="ghost-btn" onClick={() => printTable('Patients Backup', patients, patientColumns)}><Printer size={16} /> Print Patients</button></div></div><DataTable rows={patients.slice(0, 10)} columns={patientColumns.slice(0, 10)} /></section>}</div>;
 }
 
 function Inventory({ rows, brand, refresh }) {
@@ -1231,7 +1236,7 @@ function catalogRowsForBusiness(rows, brand) {
   return rows.filter((row) => allowed.has(row.business_type || 'All'));
 }
 
-function backupStoresForRole(role) {
+function backupStoresForBusiness(role, businessType = 'General Store') {
   if (role === 'Super Admin') return [
     'products', 'categories', 'brands', 'customers', 'customer_ledgers', 'suppliers',
     'supplier_ledgers', 'sales', 'sale_items', 'purchases', 'purchase_items',
@@ -1240,7 +1245,11 @@ function backupStoresForRole(role) {
     'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants',
     'master_catalogs', 'licenses', 'audit_logs', 'sync_queue',
   ];
-  return [
+  if (businessType === 'Hospital') return [
+    'patients', 'assistants', 'expenses', 'payments', 'cashbook',
+    'settings', 'notifications', 'master_catalogs', 'sync_queue',
+  ];
+  const stores = [
     'products', 'categories', 'brands', 'customers', 'customer_ledgers', 'suppliers',
     'supplier_ledgers', 'sales', 'sale_items', 'purchases', 'purchase_items',
     'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
@@ -1248,6 +1257,10 @@ function backupStoresForRole(role) {
     'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants',
     'master_catalogs', 'sync_queue',
   ];
+  if (businessType !== 'Mobile Shop') {
+    return stores.filter((store) => !['mobile_wallet_transactions', 'repairs', 'repair_updates', 'manual_repair_receipts', 'patients', 'assistants'].includes(store));
+  }
+  return stores.filter((store) => !['patients', 'assistants'].includes(store));
 }
 
 function downloadCatalogTemplate() {
@@ -1317,13 +1330,13 @@ function printPurchaseReceipt(purchase) {
 
 function printInvoice(sale, cart = [], brand = {}) {
   const qr = receiptQrData(sale);
-  const html = `<section class="receipt-shell"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${brand?.company_name || 'Digital Solutions Hub'}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p>${sale.customer_name || 'Walk-in Customer'} - ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${item.product_name}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('') : `<tr><td colspan="3">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Total: ${money(sale.total)}</h3><p>Paid: ${money(sale.paid)} | Balance: ${money(sale.balance)}</p><p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
+  const html = `<section class="receipt-shell"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p>${sale.customer_name || 'Walk-in Customer'} - ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${item.product_name}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('') : `<tr><td colspan="3">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Total: ${money(sale.total)}</h3><p>Paid: ${money(sale.paid)} | Balance: ${money(sale.balance)}</p><p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
   printHtml(`Invoice ${sale.invoice_number}`, html);
 }
 
 function invoicePdfLines(invoice, cart, brand = {}) {
   return [
-    brand?.company_name || 'Digital Solutions Hub',
+    shopDisplayName(brand),
     brand?.contact_number || '',
     `Invoice: ${invoice.invoice_number}`,
     `Customer: ${invoice.customer_name}`,
@@ -1339,7 +1352,7 @@ function invoicePdfLines(invoice, cart, brand = {}) {
 }
 
 function invoiceMessage(invoice, brand = {}) {
-  return `${brand?.company_name || 'Mobile Shop'} invoice ${invoice.invoice_number}\nCustomer: ${invoice.customer_name}\nTotal: ${money(invoice.total)}\nPaid: ${money(invoice.paid)}\nBalance: ${money(invoice.balance)}`;
+  return `${shopDisplayName(brand)} invoice ${invoice.invoice_number}\nCustomer: ${invoice.customer_name}\nTotal: ${money(invoice.total)}\nPaid: ${money(invoice.paid)}\nBalance: ${money(invoice.balance)}`;
 }
 
 function rowsToPdfLines(rows) {
@@ -1349,7 +1362,7 @@ function rowsToPdfLines(rows) {
 
 function repairReceiptHtml(repair, brand = {}) {
   const thermal = repair.template === 'Thermal Receipt';
-  return `<section class="receipt-shell ${thermal ? 'thermal' : ''}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:60px">` : ''}<div class="brand">${brand?.company_name || 'Digital Solutions Hub'}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>Repair Receipt ${repair.receipt_number}</h2><p>${repair.date || new Date().toISOString().slice(0, 10)}</p><p><strong>QR:</strong> ${receiptQrData(repair).replaceAll('\n', ' | ')}</p></div></div><table><tbody><tr><th>Customer</th><td>${repair.customer_name || ''}</td></tr><tr><th>Phone</th><td>${repair.phone || ''}</td></tr><tr><th>Device</th><td>${repair.device_name || ''}</td></tr><tr><th>IMEI</th><td>${repair.imei || ''}</td></tr><tr><th>Problem</th><td>${repair.problem || ''}</td></tr><tr><th>Technician</th><td>${repair.technician || ''}</td></tr><tr><th>Delivery Date</th><td>${repair.delivery_date || ''}</td></tr></tbody></table><h3 class="receipt-total">Charges: ${money(repair.repair_charges)}</h3><p>Advance: ${money(repair.advance_payment)} | Remaining: ${money(repair.remaining_amount)}</p><div class="signature"></div><p class="muted">Customer Signature</p><p>${brand?.footer || 'Thank you for choosing us.'}</p></section>`;
+  return `<section class="receipt-shell ${thermal ? 'thermal' : ''}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:60px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>Repair Receipt ${repair.receipt_number}</h2><p>${repair.date || new Date().toISOString().slice(0, 10)}</p><p><strong>QR:</strong> ${receiptQrData(repair).replaceAll('\n', ' | ')}</p></div></div><table><tbody><tr><th>Customer</th><td>${repair.customer_name || ''}</td></tr><tr><th>Phone</th><td>${repair.phone || ''}</td></tr><tr><th>Device</th><td>${repair.device_name || ''}</td></tr><tr><th>IMEI</th><td>${repair.imei || ''}</td></tr><tr><th>Problem</th><td>${repair.problem || ''}</td></tr><tr><th>Technician</th><td>${repair.technician || ''}</td></tr><tr><th>Delivery Date</th><td>${repair.delivery_date || ''}</td></tr></tbody></table><h3 class="receipt-total">Charges: ${money(repair.repair_charges)}</h3><p>Advance: ${money(repair.advance_payment)} | Remaining: ${money(repair.remaining_amount)}</p><div class="signature"></div><p class="muted">Customer Signature</p><p>${brand?.footer || 'Thank you for choosing us.'}</p></section>`;
 }
 
 function printRepairReceipt(repair, brand) {
@@ -1357,12 +1370,12 @@ function printRepairReceipt(repair, brand) {
 }
 
 function repairReceiptMessage(repair, brand = {}) {
-  return `${brand?.company_name || 'Mobile Shop'} repair receipt ${repair.receipt_number}\nCustomer: ${repair.customer_name}\nDevice: ${repair.device_name}\nCharges: ${money(repair.repair_charges)}\nAdvance: ${money(repair.advance_payment)}\nRemaining: ${money(repair.remaining_amount)}\nDelivery: ${repair.delivery_date || 'TBC'}`;
+  return `${shopDisplayName(brand)} repair receipt ${repair.receipt_number}\nCustomer: ${repair.customer_name}\nDevice: ${repair.device_name}\nCharges: ${money(repair.repair_charges)}\nAdvance: ${money(repair.advance_payment)}\nRemaining: ${money(repair.remaining_amount)}\nDelivery: ${repair.delivery_date || 'TBC'}`;
 }
 
 function repairReceiptPdfLines(repair, brand = {}) {
   return [
-    brand?.company_name || 'Digital Solutions Hub',
+    shopDisplayName(brand),
     brand?.contact_number || '',
     brand?.address || '',
     `Receipt Number: ${repair.receipt_number}`,
@@ -1380,6 +1393,10 @@ function repairReceiptPdfLines(repair, brand = {}) {
     'Customer Signature: ____________________',
     brand?.footer || 'Thank you for choosing us.',
   ];
+}
+
+function shopDisplayName(brand = {}) {
+  return brand?.shop_name || brand?.company_name || brand?.owner_name || 'Retail Shop';
 }
 
 function initials(value) {
