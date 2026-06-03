@@ -48,7 +48,7 @@ const SHOP_TYPES = ['Mobile Shop', 'Hospital', 'Grocery Store', 'Pharmacy', 'Gen
 const REPAIR_SHOP_TYPES = new Set(['Mobile Shop', 'Electronics Store']);
 
 const ROLE_MODULES = {
-  'Super Admin': MODULES.map((item) => item.id),
+  'Super Admin': ['dashboard', 'licenses', 'users', 'settings', 'backup', 'reports', 'notifications'],
   Admin: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'backup', 'users', 'patients', 'assistants'],
   Manager: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports', 'catalog', 'patients', 'assistants'],
   Cashier: ['dashboard', 'pos', 'sales', 'customers', 'credit', 'mobileWallets', 'repairReceipts', 'notifications'],
@@ -62,12 +62,13 @@ function userRole(user) {
   return user?.role?.name || user?.role_name || user?.role || 'Cashier';
 }
 
-function modulesForBusiness(modules, brand) {
+function modulesForBusiness(modules, brand, role) {
+  if (role === 'Super Admin') return modules;
   const type = brand?.business_type || 'General Store';
   if (type === 'Hospital') {
     return modules.filter((item) => ['dashboard', 'patients', 'assistants', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'backup', 'users'].includes(item.id));
   }
-  let scoped = modules.filter((item) => !['patients', 'assistants'].includes(item.id));
+  let scoped = modules.filter((item) => !['patients', 'assistants', 'licenses', 'settings'].includes(item.id));
   if (type !== 'Mobile Shop') scoped = scoped.filter((item) => item.id !== 'mobileWallets');
   if (!REPAIR_SHOP_TYPES.has(type)) scoped = scoped.filter((item) => !['repairs', 'repairReceipts'].includes(item.id));
   return scoped;
@@ -250,14 +251,6 @@ const DEFAULT_RECORDS = {
   'Assistant Management': () => ({ status: 'Active', role: 'Compounder' }),
 };
 
-const BUSINESS_SYNC_ENTITIES = new Set([
-  'products', 'categories', 'brands', 'customers', 'customer_ledgers', 'suppliers',
-  'supplier_ledgers', 'sales', 'sale_items', 'purchases', 'purchase_items',
-  'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
-  'roles', 'permissions', 'settings', 'notifications', 'inventory_transactions',
-  'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'licenses',
-]);
-
 const HEADER_LABELS = {
   product_name: 'Product Name',
   imei: 'IMEI / Serial',
@@ -317,7 +310,7 @@ function App() {
 
   const authenticated = Boolean(auth.token);
   const role = auth.role || 'Cashier';
-  const allowedModules = useMemo(() => modulesForBusiness(MODULES.filter((item) => (ROLE_MODULES[role] || ROLE_MODULES.Cashier).includes(item.id)), brand), [role, brand]);
+  const allowedModules = useMemo(() => modulesForBusiness(MODULES.filter((item) => (ROLE_MODULES[role] || ROLE_MODULES.Cashier).includes(item.id)), brand, role), [role, brand]);
 
   async function refresh() {
     await cleanupStartupData();
@@ -431,7 +424,7 @@ function App() {
           {active === 'accounting' && <Accounting data={data} refresh={refresh} />}
           {active === 'reports' && <Reports refreshKey={refreshKey} />}
           {active === 'catalog' && <CatalogModule rows={data.master_catalogs || []} products={data.products || []} brand={brand} refresh={refresh} />}
-          {active === 'backup' && <BackupModule data={data} refresh={refresh} />}
+          {active === 'backup' && <BackupModule data={data} auth={auth} refresh={refresh} />}
           {active === 'users' && <CrudModule config={RESOURCES.users} rows={data.users || []} refresh={refresh} />}
           {active === 'patients' && <CrudModule config={RESOURCES.patients} rows={patientRowsForUser(data.patients || [], auth, brand)} refresh={refresh} context={{ auth, brand }} />}
           {active === 'assistants' && <CrudModule config={RESOURCES.assistants} rows={assistantRowsForUser(data.assistants || [], auth, brand)} refresh={refresh} context={{ auth, brand }} />}
@@ -707,7 +700,7 @@ function CatalogModule({ rows, products, brand, refresh }) {
   return <div className="stack"><section className="panel"><ModuleHeader title="Master Catalog" query={query} setQuery={setQuery} onAdd={() => setEditing(blank())} onImport={() => importRef.current?.click()} onExport={() => exportCsv('master-catalog.csv', filtered)} onPrint={() => printTable('Master Catalog', filtered, config.columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><div className="module-actions report-actions"><button className="ghost-btn" onClick={seedPresets}><Plus size={16} /> Add Starter Catalog</button><button className="ghost-btn" onClick={downloadCatalogTemplate}><Download size={16} /> CSV Template</button><span className="shortcut-pill">{brand?.business_type || 'General Store'} catalog: {filtered.length} shown / {importedCount} total / {presetCount} starter</span></div><DataTable rows={filtered} columns={config.columns} onAdd={() => setEditing(blank())} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(row)}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => addToInventory(row)}><Boxes size={15} /> Inventory</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Catalog Detail" row={viewing} columns={config.columns} onClose={() => setViewing(null)} />}{editing && <RecordModal title="Master Catalog" fields={config.fields} record={editing} onClose={() => setEditing(null)} onSubmit={submit} />}{deleting && <DeleteDialog row={deleting} store="master_catalogs" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
-function BackupModule({ data, refresh }) {
+function BackupModule({ data, auth, refresh }) {
   const restoreRef = useRef(null);
   const patients = data?.patients || [];
   const products = data?.products || [];
@@ -727,7 +720,11 @@ function BackupModule({ data, refresh }) {
   }
   const patientColumns = ['patient_name', 'phone', 'age', 'gender', 'doctor_name', 'assistant_name', 'symptoms', 'diagnosis', 'medicine', 'medicine_days', 'next_visit', 'fee', 'status', 'visit_date', 'notes'];
   const patientRows = patients.map((patient) => Object.fromEntries(patientColumns.map((column) => [column, patient[column] ?? ''])));
-  return <div className="stack"><section className="panel"><div className="module-head"><h2>Backup & Restore</h2><div className="module-actions"><button className="primary-btn" onClick={() => exportBackupFile(`msm-full-data-backup-${new Date().toISOString().slice(0, 10)}.json`)}><Download size={16} /> Full Data Backup</button><button className="ghost-btn" onClick={() => restoreRef.current?.click()}><Upload size={16} /> Restore Backup</button></div></div><input ref={restoreRef} className="hidden-input" type="file" accept=".json" onChange={restore} /><div className="metric-grid"><div className="metric"><span>Patients</span><strong>{patients.length}</strong></div><div className="metric"><span>Inventory</span><strong>{products.length}</strong></div><div className="metric"><span>Customers</span><strong>{customers.length}</strong></div><div className="metric"><span>Sales</span><strong>{sales.length}</strong></div></div><div className="dashboard-empty"><Download size={34} /><strong>Complete business data backup</strong><p>Full Data Backup downloads real entered data: patients, inventory, sales, customers, settings, licenses, catalog, audit logs and offline sync queue.</p></div></section><section className="panel"><div className="module-head"><h2>Patients Backup</h2><div className="module-actions"><button className="ghost-btn" onClick={() => exportCsv(`patients-backup-${new Date().toISOString().slice(0, 10)}.csv`, patientRows)}><Download size={16} /> Export Patients CSV</button><button className="ghost-btn" onClick={() => printTable('Patients Backup', patients, patientColumns)}><Printer size={16} /> Print Patients</button></div></div><DataTable rows={patients.slice(0, 10)} columns={patientColumns.slice(0, 10)} /></section></div>;
+  const backupStores = backupStoresForRole(auth?.role);
+  const backupDescription = auth?.role === 'Super Admin'
+    ? 'Full platform backup includes licenses, settings and admin records.'
+    : 'Business backup includes this client shop data only. Licenses and Super Admin control data are excluded.';
+  return <div className="stack"><section className="panel"><div className="module-head"><h2>Backup & Restore</h2><div className="module-actions"><button className="primary-btn" onClick={() => exportBackupFile(`msm-full-data-backup-${new Date().toISOString().slice(0, 10)}.json`, backupStores)}><Download size={16} /> Full Data Backup</button><button className="ghost-btn" onClick={() => restoreRef.current?.click()}><Upload size={16} /> Restore Backup</button></div></div><input ref={restoreRef} className="hidden-input" type="file" accept=".json" onChange={restore} /><div className="metric-grid"><div className="metric"><span>Patients</span><strong>{patients.length}</strong></div><div className="metric"><span>Inventory</span><strong>{products.length}</strong></div><div className="metric"><span>Customers</span><strong>{customers.length}</strong></div><div className="metric"><span>Sales</span><strong>{sales.length}</strong></div></div><div className="dashboard-empty"><Download size={34} /><strong>{auth?.role === 'Super Admin' ? 'Complete platform backup' : 'Complete business data backup'}</strong><p>{backupDescription}</p></div></section><section className="panel"><div className="module-head"><h2>Patients Backup</h2><div className="module-actions"><button className="ghost-btn" onClick={() => exportCsv(`patients-backup-${new Date().toISOString().slice(0, 10)}.csv`, patientRows)}><Download size={16} /> Export Patients CSV</button><button className="ghost-btn" onClick={() => printTable('Patients Backup', patients, patientColumns)}><Printer size={16} /> Print Patients</button></div></div><DataTable rows={patients.slice(0, 10)} columns={patientColumns.slice(0, 10)} /></section></div>;
 }
 
 function Inventory({ rows, brand, refresh }) {
@@ -1232,6 +1229,25 @@ function catalogRowsForBusiness(rows, brand) {
   if (type === 'Grocery Store') allowed.add('General Store');
   if (type === 'Hospital') allowed.add('Pharmacy');
   return rows.filter((row) => allowed.has(row.business_type || 'All'));
+}
+
+function backupStoresForRole(role) {
+  if (role === 'Super Admin') return [
+    'products', 'categories', 'brands', 'customers', 'customer_ledgers', 'suppliers',
+    'supplier_ledgers', 'sales', 'sale_items', 'purchases', 'purchase_items',
+    'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
+    'roles', 'permissions', 'settings', 'notifications', 'inventory_transactions',
+    'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants',
+    'master_catalogs', 'licenses', 'audit_logs', 'sync_queue',
+  ];
+  return [
+    'products', 'categories', 'brands', 'customers', 'customer_ledgers', 'suppliers',
+    'supplier_ledgers', 'sales', 'sale_items', 'purchases', 'purchase_items',
+    'expenses', 'repairs', 'repair_updates', 'payments', 'cashbook', 'users',
+    'settings', 'notifications', 'inventory_transactions',
+    'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants',
+    'master_catalogs', 'sync_queue',
+  ];
 }
 
 function downloadCatalogTemplate() {

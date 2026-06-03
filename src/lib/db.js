@@ -725,10 +725,11 @@ export async function importMasterCatalogCsv(file) {
   return count;
 }
 
-export async function exportBackupFile(filename = 'msm-full-backup.json') {
+export async function exportBackupFile(filename = 'msm-full-backup.json', storesToExport = STORE_NAMES) {
   const db = await database();
   const stores = {};
-  for (const store of STORE_NAMES) {
+  const safeStores = [...new Set(storesToExport)].filter((store) => STORE_NAMES.includes(store));
+  for (const store of safeStores) {
     stores[store] = await db.getAll(store);
   }
   const payload = {
