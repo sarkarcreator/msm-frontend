@@ -75,6 +75,7 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .form-grid input[readonly] { @apply bg-black/[0.035] font-black text-black/70 dark:bg-white/10 dark:text-white/80; }
 .form-grid label:last-child:nth-child(odd) { @apply sm:col-span-2; }
 .span-2 { @apply sm:col-span-2; }
+.form-wide { @apply min-w-0 sm:col-span-2; }
 .inline-form { @apply my-4 grid min-w-0 gap-3 sm:grid-cols-2; }
 .inline-form button { @apply sm:col-span-2; }
 .totals { @apply my-4 flex items-center justify-between rounded border border-black/10 bg-paper p-3 dark:border-white/10 dark:bg-black/20; }
@@ -170,6 +171,22 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .detail-item { @apply grid gap-1 rounded-2xl border border-black/10 bg-paper/70 p-3 dark:border-white/10 dark:bg-black/20; }
 .detail-item span { @apply text-xs font-black uppercase text-black/45 dark:text-white/45; }
 .detail-item strong { @apply break-words text-sm font-bold text-ink dark:text-white; }
+.rx-editor { @apply grid gap-3 rounded-2xl border border-black/10 bg-paper/60 p-3 dark:border-white/10 dark:bg-black/20; }
+.rx-title { @apply flex flex-wrap items-end justify-between gap-2; }
+.rx-title strong { @apply text-sm font-black text-ink dark:text-white; }
+.rx-title span { @apply text-xs font-bold text-black/45 dark:text-white/45; }
+.rx-list { @apply grid gap-2; }
+.rx-row { @apply grid min-w-0 gap-2 rounded-2xl border border-black/10 bg-white p-3 dark:border-white/10 dark:bg-white/5; grid-template-columns: minmax(180px, 1.5fr) repeat(5, minmax(78px, .55fr)) 42px; }
+.rx-row label { @apply grid min-w-0 gap-1 text-[11px] font-black uppercase text-black/45 dark:text-white/45; }
+.rx-row input { @apply h-10 min-w-0 rounded-2xl border border-black/10 bg-white px-3 text-sm font-bold normal-case text-ink outline-none focus:border-mint dark:border-white/10 dark:bg-black/20 dark:text-white; }
+.rx-medicine input { @apply text-left; }
+.rx-remove { @apply mt-5 h-10 w-10 rounded-full px-0; }
+
+@media (max-width: 860px) {
+  .rx-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rx-medicine { grid-column: 1 / -1; }
+  .rx-remove { @apply mt-0 w-full rounded-2xl; grid-column: 1 / -1; }
+}
 
 @keyframes rise {
   from { opacity: 0; transform: translateY(10px); }

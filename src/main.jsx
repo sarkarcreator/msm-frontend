@@ -53,6 +53,8 @@ const MODULES = [
 
 const SHOP_TYPES = ['Mobile Shop', 'Hospital', 'Grocery Store', 'Pharmacy', 'General Store', 'Shopping Mall', 'Electronics Store', 'Clothing Store', 'Hardware Store'];
 const REPAIR_SHOP_TYPES = new Set(['Mobile Shop', 'Electronics Store']);
+const HOSPITAL_MODULES = new Set(['patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling']);
+const SUPER_ADMIN_MODULES = new Set(['licenses', 'settings']);
 
 const ROLE_MODULES = {
   'Super Admin': ['dashboard', 'licenses', 'users', 'settings', 'backup', 'reports', 'notifications'],
@@ -82,7 +84,7 @@ function modulesForBusiness(modules, brand, role) {
   if (type === 'Hospital') {
     return modules.filter((item) => ['dashboard', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'medicines', 'backup', 'users'].includes(item.id));
   }
-  let scoped = modules.filter((item) => !['patients', 'assistants', 'licenses', 'settings'].includes(item.id));
+  let scoped = modules.filter((item) => !HOSPITAL_MODULES.has(item.id) && !SUPER_ADMIN_MODULES.has(item.id));
   if (!REPAIR_SHOP_TYPES.has(type)) scoped = scoped.filter((item) => !['repairs', 'repairReceipts'].includes(item.id));
   return scoped;
 }
@@ -575,12 +577,22 @@ function inventoryRows(rows) {
 function Dashboard({ snapshot, data, brand, auth, refresh }) {
   if (auth?.role === 'Super Admin') return <SuperAdminDashboard data={data} refresh={refresh} />;
   if (brand?.business_type === 'Hospital') return <HospitalDashboard data={data} auth={auth} brand={brand} refresh={refresh} />;
-  const cards = [
-    ['Today Orders', snapshot?.todayOrders, false], ['Today Repairs', snapshot?.todayRepairs, false], ['Monthly Profit', snapshot?.monthlyProfit],
-    ['Best Selling Product', snapshot?.bestSellingProduct, 'text'], ['Repair Revenue', snapshot?.repairRevenue], ['Pending Repairs', snapshot?.pendingRepairs, false],
-    ['Today Sales', snapshot?.todaySales], ['Credit Receivable', snapshot?.creditReceivable], ['Supplier Payables', snapshot?.supplierPayables],
-    ['Cash In Hand', snapshot?.cashInHand], ['Inventory Value', snapshot?.inventoryValue], ['Inventory Qty', snapshot?.inventoryQuantity, false],
+  const businessType = brand?.business_type || 'General Store';
+  const supportsRepairs = REPAIR_SHOP_TYPES.has(businessType);
+  const retailCards = [
+    ['Today Orders', snapshot?.todayOrders, false],
+    ['Today Sales', snapshot?.todaySales],
+    ['Monthly Profit', snapshot?.monthlyProfit],
+    ['Best Selling Product', snapshot?.bestSellingProduct, 'text'],
+    ['Credit Receivable', snapshot?.creditReceivable],
+    ['Supplier Payables', snapshot?.supplierPayables],
+    ['Cash In Hand', snapshot?.cashInHand],
+    ['Inventory Value', snapshot?.inventoryValue],
+    ['Inventory Qty', snapshot?.inventoryQuantity, false],
   ];
+  const repairCards = supportsRepairs ? [['Today Repairs', snapshot?.todayRepairs, false], ['Repair Revenue', snapshot?.repairRevenue], ['Pending Repairs', snapshot?.pendingRepairs, false]] : [];
+  const pharmacyCards = businessType === 'Pharmacy' ? [['Medicine Items', (data.medicines || []).length, false], ['Low Stock Medicines', (snapshot?.lowStock || []).length, false], ['Near Expiry Items', nearExpiryProducts(data.products || []).length, false]] : [];
+  const cards = [...retailCards.slice(0, 4), ...pharmacyCards, ...repairCards, ...retailCards.slice(4)];
   const sales = data.sales || [];
   const customers = data.customers || [];
   const products = data.products || [];
@@ -588,7 +600,16 @@ function Dashboard({ snapshot, data, brand, auth, refresh }) {
   const showWalletDashboard = (ROLE_MODULES[auth?.role] || ROLE_MODULES.Cashier).includes('mobileWallets');
   const pendingRepairs = [...(data.repairs || []), ...(data.manual_repair_receipts || [])].filter((row) => !['Delivered', 'Completed'].includes(row.status));
   const max = Math.max(...sales.slice(0, 8).map((sale) => Number(sale.total)), 1);
-  return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? (value || 'No Data Available') : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div>{showWalletDashboard && <WalletDashboard wallets={wallets} />}<section className="panel"><div className="module-head"><h2>Sales Performance</h2><span className="shortcut-pill"><BarChart3 size={15} /> Last {Math.min(sales.length, 8)} invoices</span></div>{sales.length ? <SalesChart sales={sales} max={max} /> : <DashboardEmpty icon={BarChart3} title="No Sales Data Available" description="Start creating sales to see analytics." />}</section><section className="split"><DashboardTable title="Top Customers" rows={snapshot?.topCustomers || []} cols={['name', 'phone', 'total_spent', 'balance']} emptyIcon={Users} emptyTitle={customers.length ? 'No Spending History Available' : 'No Customer Data Available'} emptyDescription={customers.length ? 'Customer spend totals will appear after sales are recorded.' : 'Create customers or complete sales to build this leaderboard.'} /><DashboardTable title="Low Stock Alerts" rows={snapshot?.lowStock || []} cols={['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={products.length ? 'All Stock Levels Healthy' : 'No Inventory Data Available'} emptyDescription={products.length ? 'Products below their low stock threshold will appear here.' : 'Add inventory or receive stock from Purchases to enable alerts.'} /></section><section className="split"><DashboardTable title="Recent Sales" rows={snapshot?.recentSales || []} cols={['invoice_number', 'customer_name', 'total', 'paid', 'balance']} emptyIcon={ReceiptText} emptyTitle="No Recent Sales Available" emptyDescription="Completed invoices will appear here automatically." /><DashboardTable title="Pending Repairs" rows={pendingRepairs} cols={['job_number', 'receipt_number', 'customer_name', 'device_name', 'status']} emptyIcon={Wrench} emptyTitle="No Pending Repairs" emptyDescription="Open repair jobs and manual repair receipts will appear here." /></section></div>;
+  return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? (value || 'No Data Available') : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div>{showWalletDashboard && <WalletDashboard wallets={wallets} />}<section className="panel"><div className="module-head"><h2>Sales Performance</h2><span className="shortcut-pill"><BarChart3 size={15} /> Last {Math.min(sales.length, 8)} invoices</span></div>{sales.length ? <SalesChart sales={sales} max={max} /> : <DashboardEmpty icon={BarChart3} title="No Sales Data Available" description="Start creating sales to see analytics." />}</section><section className="split"><DashboardTable title="Top Customers" rows={snapshot?.topCustomers || []} cols={['name', 'phone', 'total_spent', 'balance']} emptyIcon={Users} emptyTitle={customers.length ? 'No Spending History Available' : 'No Customer Data Available'} emptyDescription={customers.length ? 'Customer spend totals will appear after sales are recorded.' : 'Create customers or complete sales to build this leaderboard.'} /><DashboardTable title="Low Stock Alerts" rows={snapshot?.lowStock || []} cols={['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={products.length ? 'All Stock Levels Healthy' : 'No Inventory Data Available'} emptyDescription={products.length ? 'Products below their low stock threshold will appear here.' : 'Add inventory or receive stock from Purchases to enable alerts.'} /></section><section className="split"><DashboardTable title="Recent Sales" rows={snapshot?.recentSales || []} cols={['invoice_number', 'customer_name', 'total', 'paid', 'balance']} emptyIcon={ReceiptText} emptyTitle="No Recent Sales Available" emptyDescription="Completed invoices will appear here automatically." />{supportsRepairs ? <DashboardTable title="Pending Repairs" rows={pendingRepairs} cols={['job_number', 'receipt_number', 'customer_name', 'device_name', 'status']} emptyIcon={Wrench} emptyTitle="No Pending Repairs" emptyDescription="Open repair jobs and manual repair receipts will appear here." /> : <DashboardTable title={businessType === 'Pharmacy' ? 'Near Expiry Medicines' : 'Inventory Watch'} rows={businessType === 'Pharmacy' ? nearExpiryProducts(products) : snapshot?.lowStock || []} cols={businessType === 'Pharmacy' ? ['product_name', 'batch_number', 'expiry_date', 'quantity'] : ['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={businessType === 'Pharmacy' ? 'No Near Expiry Medicines' : 'Inventory Looks Good'} emptyDescription={businessType === 'Pharmacy' ? 'Medicines close to expiry will appear here.' : 'Stock issues will appear here automatically.'} />}</section></div>;
+}
+
+function nearExpiryProducts(products) {
+  const limit = Date.now() + 90 * 86400000;
+  return products.filter((product) => {
+    if (!product.expiry_date) return false;
+    const expiry = new Date(product.expiry_date).getTime();
+    return Number.isFinite(expiry) && expiry <= limit;
+  });
 }
 
 function SuperAdminDashboard({ data }) {
@@ -1468,7 +1489,14 @@ function PrescriptionEditor({ value, medicines, onChange }) {
   };
   const add = () => onChange(JSON.stringify([...rows, { medicine: '', morning: 1, afternoon: 0, evening: 0, night: 1, days: 5 }]));
   const remove = (index) => onChange(JSON.stringify(rows.filter((_, rowIndex) => rowIndex !== index)));
-  return <div className="form-wide"><strong>Smart Prescription</strong><div className="data-table"><div className="table-wrap"><table><thead><tr><th>Medicine</th><th>Morning</th><th>Afternoon</th><th>Evening</th><th>Night</th><th>Days</th><th>Actions</th></tr></thead><tbody>{rows.map((row, index) => <tr key={index}><td><input list="rx-medicines" value={row.medicine || ''} onChange={(e) => update(index, 'medicine', e.target.value)} /></td>{['morning', 'afternoon', 'evening', 'night'].map((key) => <td key={key}><input className="cell-input" type="number" min="0" value={row[key] || 0} onChange={(e) => update(index, key, Number(e.target.value))} /></td>)}<td><input className="cell-input" type="number" min="1" value={row.days || 1} onChange={(e) => update(index, 'days', Number(e.target.value))} /></td><td><button type="button" className="danger-btn" onClick={() => remove(index)}><Trash2 size={14} /></button></td></tr>)}</tbody></table></div></div><datalist id="rx-medicines">{medicines.map((medicine) => <option key={medicine} value={medicine} />)}</datalist><button type="button" className="ghost-btn" onClick={add}><Plus size={15} /> Add Medicine</button></div>;
+  const doseFields = [
+    ['morning', 'Morning'],
+    ['afternoon', 'Afternoon'],
+    ['evening', 'Evening'],
+    ['night', 'Night'],
+    ['days', 'Days'],
+  ];
+  return <div className="form-wide rx-editor"><div className="rx-title"><strong>Smart Prescription</strong><span>Medicine dose schedule</span></div><div className="rx-list">{rows.map((row, index) => <div className="rx-row" key={index}><label className="rx-medicine">Medicine<input list="rx-medicines" value={row.medicine || ''} onChange={(e) => update(index, 'medicine', e.target.value)} placeholder="Medicine name" /></label>{doseFields.map(([key, label]) => <label key={key}>{label}<input type="number" min={key === 'days' ? '1' : '0'} value={row[key] || (key === 'days' ? 1 : 0)} onChange={(e) => update(index, key, Number(e.target.value))} /></label>)}<button type="button" className="danger-btn rx-remove" onClick={() => remove(index)} title="Remove medicine"><Trash2 size={14} /></button></div>)}</div><datalist id="rx-medicines">{medicines.map((medicine) => <option key={medicine} value={medicine} />)}</datalist><button type="button" className="ghost-btn" onClick={add}><Plus size={15} /> Add Medicine</button></div>;
 }
 
 function DoctorOrdersEditor({ value, onChange }) {
