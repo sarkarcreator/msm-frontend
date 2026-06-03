@@ -334,10 +334,23 @@ export async function quickCustomer({ name, phone, address, cnic, notes }) {
   });
 }
 
-export async function generateLicense({ owner_name, business_type = 'Mobile Shop', device_id, type = '1 Month', status = 'Active' }) {
+export async function generateLicense({
+  owner_name,
+  business_type = 'Mobile Shop',
+  device_id,
+  type = '1 Month',
+  status = 'Active',
+  sale_price = 0,
+  cost_price = 0,
+  theme_color = '#14B8A6',
+  logo = '',
+  footer_branding = '',
+}) {
   const months = { '1 Month': 1, '6 Months': 6, '1 Year': 12, Lifetime: 1200 }[type] || 1;
   const expiry = new Date();
   expiry.setMonth(expiry.getMonth() + months);
+  const sale = Number(sale_price || 0);
+  const cost = Number(cost_price || 0);
   await cleanupStartupData();
   return saveRecord('licenses', {
     license_key: `DSH-${crypto.randomUUID().slice(0, 8).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`,
@@ -350,6 +363,20 @@ export async function generateLicense({ owner_name, business_type = 'Mobile Shop
     trial: type === 'Trial',
     expiry_date: type === 'Lifetime' ? 'Lifetime' : expiry.toISOString().slice(0, 10),
     activated_at: new Date().toISOString(),
+    sale_price: sale,
+    cost_price: cost,
+    profit: Math.max(0, sale - cost),
+    theme_color,
+    logo,
+    footer_branding,
+    metadata: {
+      sale_price: sale,
+      cost_price: cost,
+      profit: Math.max(0, sale - cost),
+      theme_color,
+      logo,
+      footer_branding,
+    },
   });
 }
 

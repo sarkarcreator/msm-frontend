@@ -558,6 +558,8 @@ function SuperAdminDashboard({ data }) {
   const activeLicenses = licenses.filter((license) => license.status === 'Active' && license.renewal_state !== 'Expired');
   const expiredLicenses = licenses.filter((license) => license.renewal_state === 'Expired');
   const expiringLicenses = licenses.filter((license) => license.renewal_state === 'Renew Soon');
+  const totalRevenue = licenses.reduce((sum, license) => sum + Number(license.sale_price || 0), 0);
+  const totalProfit = licenses.reduce((sum, license) => sum + Number(license.profit || 0), 0);
   const businessRows = Object.entries(licenses.reduce((acc, license) => {
     const key = license.business_type || 'Unknown';
     acc[key] = (acc[key] || 0) + 1;
@@ -568,8 +570,10 @@ function SuperAdminDashboard({ data }) {
     ['Active Licenses', activeLicenses.length, false],
     ['Expiring Soon', expiringLicenses.length, false],
     ['Expired Licenses', expiredLicenses.length, false],
+    ['License Revenue', totalRevenue, true],
+    ['License Profit', totalProfit, true],
   ];
-  return <div className="stack"><div className="metric-grid">{cards.map(([label, value]) => <div className="metric animated" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div><section className="split"><DashboardTable title="License Users" rows={licenses.slice(0, 10)} cols={['owner_name', 'business_type', 'type', 'status', 'expiry_date', 'days_left']} emptyIcon={KeyRound} emptyTitle="No License Data Available" emptyDescription="Generated and activated licenses will appear here." /><DashboardTable title="Business Type Summary" rows={businessRows} cols={['business_type', 'total']} emptyIcon={BarChart3} emptyTitle="No Business Data Available" emptyDescription="License business categories will appear here automatically." /></section><DashboardTable title="Renewal Alerts" rows={expiringLicenses} cols={['owner_name', 'business_type', 'expiry_date', 'days_left', 'renewal_state']} emptyIcon={Bell} emptyTitle="No Renewals Due" emptyDescription="Licenses with 30 days or less remaining will appear here." /></div>;
+  return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue ? money(value) : value}</strong></div>)}</div><section className="split"><DashboardTable title="License Users" rows={licenses.slice(0, 10)} cols={['owner_name', 'business_type', 'type', 'status', 'expiry_date', 'days_left', 'sale_price', 'profit']} emptyIcon={KeyRound} emptyTitle="No License Data Available" emptyDescription="Generated and activated licenses will appear here." /><DashboardTable title="Business Type Summary" rows={businessRows} cols={['business_type', 'total']} emptyIcon={BarChart3} emptyTitle="No Business Data Available" emptyDescription="License business categories will appear here automatically." /></section><DashboardTable title="Renewal Alerts" rows={expiringLicenses} cols={['owner_name', 'business_type', 'expiry_date', 'days_left', 'renewal_state']} emptyIcon={Bell} emptyTitle="No Renewals Due" emptyDescription="Licenses with 30 days or less remaining will appear here." /></div>;
 }
 
 function HospitalDashboard({ data, auth, brand, refresh }) {
@@ -1113,13 +1117,14 @@ function SettingsPanel({ brand, rows, refresh }) {
 }
 
 function LicenseManager({ rows, refresh }) {
-  const licenseColumns = ['license_key', 'activation_code', 'owner_name', 'business_type', 'device_id', 'type', 'status', 'expiry_date', 'days_left', 'renewal_state'];
-  const newLicenseForm = () => ({ owner_name: '', business_type: 'Mobile Shop', device_id: ensureDeviceId(), type: '1 Month', status: 'Active' });
+  const licenseColumns = ['license_key', 'activation_code', 'owner_name', 'business_type', 'sale_price', 'cost_price', 'profit', 'type', 'status', 'expiry_date', 'days_left', 'renewal_state'];
+  const newLicenseForm = () => ({ owner_name: '', business_type: 'Mobile Shop', device_id: ensureDeviceId(), type: '1 Month', status: 'Active', sale_price: 0, cost_price: 0, theme_color: '#14B8A6', logo: '', footer_branding: '' });
   const [form, setForm] = useState(newLicenseForm);
   const [status, setStatus] = useState(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [renewing, setRenewing] = useState(null);
   const [query, setQuery] = useState('');
   useEffect(() => { activeLicenseStatus().then(setStatus); }, [rows]);
   const licenseRows = useMemo(() => rows.map(enrichLicense), [rows]);
@@ -1128,11 +1133,11 @@ function LicenseManager({ rows, refresh }) {
     e.preventDefault();
     try {
       if (form.uuid) {
-        const payload = { ...form };
+        const payload = licensePayload(form);
         await saveRecord('licenses', payload);
         await saveRemoteRecord('licenses', payload);
       } else {
-        const license = await generateLicense(form);
+        const license = await generateLicense(licensePayload(form));
         await saveRemoteRecord('licenses', license, { forceCreate: true });
       }
       setForm(newLicenseForm());
@@ -1149,10 +1154,13 @@ function LicenseManager({ rows, refresh }) {
     await refresh();
     notify('License deleted successfully');
   }
-  async function renew(row, type = row.type || '1 Month') {
-    const renewed = { ...row, type, status: 'Active', expiry_date: licenseExpiryForType(type, row.expiry_date), renewed_at: new Date().toISOString() };
+  async function renew(e) {
+    e.preventDefault();
+    const type = renewing.renewal_type || renewing.type || '1 Month';
+    const renewed = licensePayload({ ...renewing, type, status: 'Active', expiry_date: licenseExpiryForType(type, renewing.expiry_date), renewed_at: new Date().toISOString() });
     await saveRecord('licenses', renewed);
     await saveRemoteRecord('licenses', renewed);
+    setRenewing(null);
     await refresh();
     notify('License renewed successfully');
   }
@@ -1178,7 +1186,7 @@ function LicenseManager({ rows, refresh }) {
             <>
               <button className="ghost-btn" onClick={() => setViewing(row)}>View</button>
               <button className="ghost-btn" onClick={() => { setForm({ ...row, business_type: row.business_type || 'Mobile Shop', device_id: row.device_id || ensureDeviceId() }); setCreating(true); }}><Edit3 size={15} /> Edit</button>
-              <button className="ghost-btn" onClick={() => renew(row)}><KeyRound size={15} /> Renew</button>
+              <button className="ghost-btn" onClick={() => setRenewing({ ...row, renewal_type: row.type || '1 Month', sale_price: row.sale_price || 0, cost_price: row.cost_price || 0 })}><KeyRound size={15} /> Renew</button>
               <button className="ghost-btn" onClick={() => downloadPdf(`${row.license_key}.pdf`, 'License Certificate', [`License: ${row.license_key}`, `Activation: ${row.activation_code}`, `Owner: ${row.owner_name}`, `Shop Type: ${row.business_type || 'Mobile Shop'}`, `Device: ${row.device_id}`, `Type: ${row.type}`, `Expiry: ${row.expiry_date}`])}><FileDown size={15} /> PDF</button>
               <button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button>
             </>
@@ -1201,11 +1209,45 @@ function LicenseManager({ rows, refresh }) {
                 <label>License Type<select value={form.type || '1 Month'} onChange={(e) => setForm({ ...form, type: e.target.value })}>{['1 Month', '6 Months', '1 Year', 'Lifetime'].map((item) => <option key={item}>{item}</option>)}</select></label>
                 <label>Status<select value={form.status || 'Active'} onChange={(e) => setForm({ ...form, status: e.target.value })}><option>Active</option><option>Disabled</option></select></label>
                 <label>Expiry Date<input type="date" value={form.expiry_date === 'Lifetime' ? '' : form.expiry_date || ''} onChange={(e) => setForm({ ...form, expiry_date: e.target.value })} /></label>
+                <label>Sale Price<input type="number" min="0" value={form.sale_price || 0} onChange={(e) => setForm({ ...form, sale_price: e.target.value })} /></label>
+                <label>Cost Price<input type="number" min="0" value={form.cost_price || 0} onChange={(e) => setForm({ ...form, cost_price: e.target.value })} /></label>
+                <label>Profit<input readOnly value={Math.max(0, Number(form.sale_price || 0) - Number(form.cost_price || 0))} /></label>
+                <label>Theme Color<input type="color" value={form.theme_color || '#14B8A6'} onChange={(e) => setForm({ ...form, theme_color: e.target.value })} /></label>
+                <label>Logo URL<input value={form.logo || ''} onChange={(e) => setForm({ ...form, logo: e.target.value })} /></label>
+                <label>Footer Branding<input value={form.footer_branding || ''} onChange={(e) => setForm({ ...form, footer_branding: e.target.value })} /></label>
               </div>
             </div>
             <div className="modal-footer">
               <button type="button" className="ghost-btn" onClick={() => setCreating(false)}>Cancel</button>
               <button className="primary-btn">Save</button>
+            </div>
+          </form>
+        </ModalShell>
+      )}
+      {renewing && (
+        <ModalShell onClose={() => setRenewing(null)}>
+          <form onSubmit={renew}>
+            <div className="modal-header">
+              <h2>Renew License</h2>
+              <button type="button" className="icon-btn" onClick={() => setRenewing(null)} title="Close"><X size={17} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="form-grid">
+                <label>Shop Owner<input readOnly value={renewing.owner_name || ''} /></label>
+                <label>Current Expiry<input readOnly value={renewing.expiry_date || ''} /></label>
+                <label>Renew For<select value={renewing.renewal_type || '1 Month'} onChange={(e) => setRenewing({ ...renewing, renewal_type: e.target.value })}>{['1 Month', '6 Months', '1 Year', 'Lifetime'].map((item) => <option key={item}>{item}</option>)}</select></label>
+                <label>New Expiry<input readOnly value={licenseExpiryForType(renewing.renewal_type || '1 Month', renewing.expiry_date)} /></label>
+                <label>Sale Price<input type="number" min="0" value={renewing.sale_price || 0} onChange={(e) => setRenewing({ ...renewing, sale_price: e.target.value })} /></label>
+                <label>Cost Price<input type="number" min="0" value={renewing.cost_price || 0} onChange={(e) => setRenewing({ ...renewing, cost_price: e.target.value })} /></label>
+                <label>Profit<input readOnly value={Math.max(0, Number(renewing.sale_price || 0) - Number(renewing.cost_price || 0))} /></label>
+                <label>Theme Color<input type="color" value={renewing.theme_color || '#14B8A6'} onChange={(e) => setRenewing({ ...renewing, theme_color: e.target.value })} /></label>
+                <label>Logo URL<input value={renewing.logo || ''} onChange={(e) => setRenewing({ ...renewing, logo: e.target.value })} /></label>
+                <label>Footer Branding<input value={renewing.footer_branding || ''} onChange={(e) => setRenewing({ ...renewing, footer_branding: e.target.value })} /></label>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="ghost-btn" onClick={() => setRenewing(null)}>Cancel</button>
+              <button className="primary-btn">Renew License</button>
             </div>
           </form>
         </ModalShell>
@@ -1347,8 +1389,36 @@ function licenseDaysLeft(license = {}) {
   return Math.ceil((end.getTime() - start.getTime()) / 86400000);
 }
 
+function licensePayload(license = {}) {
+  const sale = Number(license.sale_price ?? license.metadata?.sale_price ?? 0);
+  const cost = Number(license.cost_price ?? license.metadata?.cost_price ?? 0);
+  const metadata = {
+    ...(license.metadata || {}),
+    sale_price: sale,
+    cost_price: cost,
+    profit: Math.max(0, sale - cost),
+    theme_color: license.theme_color || license.metadata?.theme_color || '#14B8A6',
+    logo: license.logo || license.metadata?.logo || '',
+    footer_branding: license.footer_branding || license.metadata?.footer_branding || '',
+  };
+  const { days_left, renewal_state, renewal_type, ...clean } = license;
+  return {
+    ...clean,
+    sale_price: sale,
+    cost_price: cost,
+    profit: metadata.profit,
+    theme_color: metadata.theme_color,
+    logo: metadata.logo,
+    footer_branding: metadata.footer_branding,
+    metadata,
+  };
+}
+
 function enrichLicense(license = {}) {
   const days = licenseDaysLeft(license);
+  const metadata = license.metadata || {};
+  const sale = Number(license.sale_price ?? metadata.sale_price ?? 0);
+  const cost = Number(license.cost_price ?? metadata.cost_price ?? 0);
   const renewalState = license.expiry_date === 'Lifetime'
     ? 'Lifetime'
     : days < 0
@@ -1358,6 +1428,12 @@ function enrichLicense(license = {}) {
         : 'Active';
   return {
     ...license,
+    sale_price: sale,
+    cost_price: cost,
+    profit: Number(license.profit ?? metadata.profit ?? Math.max(0, sale - cost)),
+    theme_color: license.theme_color || metadata.theme_color || '#14B8A6',
+    logo: license.logo || metadata.logo || '',
+    footer_branding: license.footer_branding || metadata.footer_branding || '',
     days_left: license.expiry_date === 'Lifetime' ? 'Lifetime' : `${Math.max(days ?? 0, 0)} days`,
     renewal_state: renewalState,
   };
