@@ -16,7 +16,9 @@ import {
   importMedicinesFile, searchMedicines,
   printHtml, quickCustomer, receiptQrData, receiveCustomerPayment,
   reportData, saveBrandSettings, saveRecord, saveRemoteRecord, saveUserAccount, syncNow, hydrateRemoteStores, updateRepairStatus,
-  whatsAppShare, createManualRepairReceipt, saveHospitalPatientWorkflow, syncHospitalPatientWorkflow,
+  whatsAppShare, createManualRepairReceipt, saveHospitalPatientWorkflow, syncHospitalPatientWorkflow, transitionHospitalPatientStatus,
+  completeHospitalPrescription, completeHospitalLabReport,
+  recalculateHospitalBill,
 } from './lib/db.js';
 import './styles/app.css';
 
@@ -1580,8 +1582,14 @@ function HospitalWorkflow({ title, rows, store, columns, refresh }) {
   const [query, setQuery] = useState('');
   const filtered = useMemo(() => filterRows(rows, query, columns), [rows, query, columns]);
   async function submit(record) {
-    const saved = await saveRecord(store, record);
-    runInBackground(() => saveRemoteRecord(store, saved), `${title} synced in background`);
+    if (store === 'hospital_prescriptions' && record.status === 'Completed') {
+      await completeHospitalPrescription(record.uuid);
+    } else if (store === 'lab_reports' && record.status === 'Completed') {
+      await completeHospitalLabReport(record.uuid);
+    } else {
+      const saved = await saveRecord(store, record);
+      runInBackground(() => saveRemoteRecord(store, saved), `${title} synced in background`);
+    }
     setEditing(null);
     await refresh();
     notify(`${title} saved successfully`);
@@ -1634,8 +1642,16 @@ function HospitalBillingWorkflow({ data, brand, refresh }) {
 
   async function updatePatientStatus(status) {
     if (!activePatient) return;
-    const updated = await saveRecord('patients', { ...activePatient, status });
-    runInBackground(() => saveRemoteRecord('patients', updated), 'Patient status synced in background');
+    const order = ['Waiting', 'Doctor Checked', 'Sent To Reception', 'Under Treatment', 'Treatment Completed', 'Closed'];
+    let current = activePatient.status || 'Waiting';
+    const targetIndex = order.indexOf(status);
+    let currentIndex = order.indexOf(current);
+    if (targetIndex < 0 || currentIndex < 0 || targetIndex < currentIndex) return;
+    while (currentIndex < targetIndex) {
+      current = order[currentIndex + 1];
+      await transitionHospitalPatientStatus(activePatient.uuid, current);
+      currentIndex += 1;
+    }
   }
 
   async function updateLine(line, patch) {
@@ -1669,14 +1685,7 @@ function HospitalBillingWorkflow({ data, brand, refresh }) {
     if (!activeBill) return;
     const realBill = activeBill.is_virtual ? await materializeHospitalBill(activeBill, lines) : activeBill;
     const nextPaid = Number(extra.paid ?? activeBill.paid ?? 0);
-    const updated = await saveRecord('hospital_bills', {
-      ...realBill,
-      ...hospitalBillTotals(lines, nextPaid),
-      paid: nextPaid,
-      balance: Math.max(0, total - nextPaid),
-      status: Math.max(0, total - nextPaid) <= 0 ? 'Paid' : 'Pending',
-    });
-    runInBackground(() => saveRemoteRecord('hospital_bills', updated), 'Hospital bill synced in background');
+    await recalculateHospitalBill(realBill.uuid, nextPaid);
     await refresh();
     notify('Hospital bill saved successfully');
   }
@@ -1779,10 +1788,10 @@ async function materializeHospitalBill(bill, lines = []) {
     status: bill.status || 'Pending',
     ...totals,
   });
-  runInBackground(() => saveRemoteRecord('hospital_bills', saved), 'Hospital bill synced in background');
+  await saveRemoteRecord('hospital_bills', saved);
   for (const line of lines.filter((item) => item.source === 'item')) {
     const savedItem = await saveRecord('hospital_bill_items', { ...line.raw, bill_uuid: saved.uuid, patient_uuid: bill.patient_uuid, token_number: bill.token_number, amount: Number(line.amount || 0) });
-    runInBackground(() => saveRemoteRecord('hospital_bill_items', savedItem), 'Bill item synced in background');
+    await saveRemoteRecord('hospital_bill_items', savedItem);
   }
   return saved;
 }

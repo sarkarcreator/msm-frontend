@@ -63,7 +63,7 @@ const TENANT_SCOPED_STORES = new Set([
   'settings', 'notifications', 'inventory_transactions', 'manual_repair_receipts',
   'mobile_wallet_transactions', 'patients', 'assistants', 'hospital_prescriptions',
   'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports',
-  'hospital_bills', 'hospital_bill_items', 'master_catalogs',
+  'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'sync_queue',
 ]);
 
 const BUSINESS_TYPED_STORES = new Set(['products', 'categories', 'brands', 'master_catalogs', 'medicines']);
@@ -84,6 +84,7 @@ export async function listRecords(store) {
   const db = await database();
   return (await db.getAll(store))
     .filter((record) => !record.deleted_at)
+    .filter((record) => !record.quarantined_at)
     .filter((record) => scopedRecordVisible(store, record))
     .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
 }
@@ -102,7 +103,7 @@ export async function cleanupStartupData() {
 
   for (const [store, keyFor] of plans) {
     const rows = await db.getAll(store);
-    const active = rows.filter((row) => !row.deleted_at);
+    const active = rows.filter((row) => !row.deleted_at && !row.quarantined_at && scopedRecordVisible(store, row));
     const groups = new Map();
     for (const row of active) {
       const key = scopedDedupeKey(store, row, keyFor(row));
@@ -184,6 +185,7 @@ export async function deleteRemoteRecord(resource, uuid, mode = 'soft') {
     headers: {
       Accept: 'application/json',
       Authorization: `Bearer ${token}`,
+      'X-Device-Id': localStorage.getItem('dsh_device_id') || ensureDeviceId(),
     },
   });
   if (!response.ok && response.status !== 404) {
@@ -279,7 +281,10 @@ function scopedRecordVisible(store, record) {
   const scope = currentScope();
   if (scope.role === 'Super Admin') return true;
   if (TENANT_SCOPED_STORES.has(store) && scope.license_uuid) {
-    return !record.license_uuid || String(record.license_uuid).toLowerCase() === String(scope.license_uuid).toLowerCase();
+    return Boolean(record.license_uuid) && String(record.license_uuid).toLowerCase() === String(scope.license_uuid).toLowerCase();
+  }
+  if (TENANT_SCOPED_STORES.has(store)) {
+    return false;
   }
   if (BUSINESS_TYPED_STORES.has(store) && scope.business_type && record.business_type) {
     if (scope.business_type === 'General Store') return ['General Store', 'Grocery Store', 'All'].includes(record.business_type);
@@ -552,112 +557,128 @@ export async function createManualRepairReceipt(record) {
 }
 
 export async function saveHospitalPatientWorkflow(record) {
-  const visitDate = record.visit_date || new Date().toISOString().slice(0, 10);
-  const isExisting = Boolean(record.uuid);
-  const tokenNumber = record.token_number || await nextDailyToken('patients', visitDate, record.uuid);
-  const patient = await saveRecord('patients', {
-    ...record,
-    token_number: tokenNumber,
-    mr_number: record.mr_number || await nextNumber('patients', 'MR'),
-    status: isExisting ? (record.status || 'Sent To Reception') : 'Sent To Reception',
-    visit_date: visitDate,
+  if (!navigator.onLine || !localStorage.getItem('dsh_token')) {
+    throw new Error('Hospital workflow requires online backend validation.');
+  }
+
+  const response = await fetch(`${API_URL}/hospital/workflows`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+      'X-Device-Id': localStorage.getItem('dsh_device_id') || ensureDeviceId(),
+    },
+    body: JSON.stringify(record),
   });
-  await clearGeneratedHospitalWorkflow(patient.uuid);
-  const prescriptions = parseStructuredList(record.prescription_items || record.medicine);
-  const orders = parseStructuredList(record.doctor_orders || '');
-  const billItems = [];
-
-  for (const item of prescriptions) {
-    const row = await saveRecord('hospital_prescriptions', {
-      patient_uuid: patient.uuid,
-      token_number: patient.token_number,
-      patient_name: patient.patient_name,
-      doctor_name: patient.doctor_name,
-      medicine_uuid: item.medicine_uuid || '',
-      medicine_name: item.medicine || item.medicine_name || item.name,
-      morning: Number(item.morning || 0),
-      afternoon: Number(item.afternoon || 0),
-      evening: Number(item.evening || 0),
-      night: Number(item.night || 0),
-      days: Number(item.days || 1),
-      status: 'Pending',
-    });
-    billItems.push({ item_type: 'Medicine', description: row.medicine_name, quantity: 1, amount: Number(item.amount || 0) });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Hospital workflow save failed.';
+    throw new Error(detail);
   }
 
-  for (const item of orders) {
-    const type = item.order_type || item.type || item.name || item.order_name;
-    const order = await saveRecord('hospital_orders', {
-      patient_uuid: patient.uuid,
-      token_number: patient.token_number,
-      patient_name: patient.patient_name,
-      doctor_name: patient.doctor_name,
-      order_type: orderType(type),
-      order_name: item.order_name || item.name || type,
-      charges: Number(item.charges || defaultOrderCharge(type)),
-      status: 'Pending',
-      notes: item.notes || '',
-    });
-    const taskType = order.order_type;
-    await saveRecord(taskType === 'Lab' ? 'lab_reports' : taskType === 'Radiology' ? 'radiology_reports' : 'hospital_tasks', {
-      patient_uuid: patient.uuid,
-      token_number: patient.token_number,
-      order_uuid: order.uuid,
-      patient_name: patient.patient_name,
-      task_type: taskType,
-      task_name: order.order_name,
-      test_name: taskType === 'Lab' ? order.order_name : undefined,
-      study_type: taskType === 'Radiology' ? order.order_name : undefined,
-      assigned_role: taskRole(taskType),
-      status: 'Pending',
-    });
-    billItems.push({ item_type: taskType, description: order.order_name, quantity: 1, amount: Number(order.charges || 0) });
-  }
-
-  if (Number(patient.registration_fee || patient.fee || 0) > 0) {
-    billItems.unshift({ item_type: 'Doctor Fee', description: 'Consultation / Registration Fee', quantity: 1, amount: Number(patient.registration_fee || patient.fee || 0) });
-  }
-
-  if (billItems.length) {
-    const grandTotal = billItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-    const bill = await saveRecord('hospital_bills', {
-      patient_uuid: patient.uuid,
-      token_number: patient.token_number,
-      bill_number: await nextNumber('hospital_bills', 'HBL'),
-      patient_name: patient.patient_name,
-      doctor_fee: Number(patient.registration_fee || patient.fee || 0),
-      medicine_charges: billItems.filter((item) => item.item_type === 'Medicine').reduce((sum, item) => sum + Number(item.amount || 0), 0),
-      injection_charges: billItems.filter((item) => item.item_type === 'Injection').reduce((sum, item) => sum + Number(item.amount || 0), 0),
-      lab_charges: billItems.filter((item) => item.item_type === 'Lab').reduce((sum, item) => sum + Number(item.amount || 0), 0),
-      radiology_charges: billItems.filter((item) => item.item_type === 'Radiology').reduce((sum, item) => sum + Number(item.amount || 0), 0),
-      procedure_charges: billItems.filter((item) => !['Medicine', 'Injection', 'Lab', 'Radiology', 'Doctor Fee'].includes(item.item_type)).reduce((sum, item) => sum + Number(item.amount || 0), 0),
-      grand_total: grandTotal,
-      paid: 0,
-      balance: grandTotal,
-      status: 'Pending',
-    });
-    for (const item of billItems) {
-      await saveRecord('hospital_bill_items', { ...item, bill_uuid: bill.uuid, patient_uuid: patient.uuid, token_number: patient.token_number });
-    }
-  }
-
-  return patient;
+  await cacheHospitalWorkflow(payload);
+  return payload.patient;
 }
 
 export async function syncHospitalPatientWorkflow(patientUuid) {
   if (!patientUuid || !navigator.onLine || !localStorage.getItem('dsh_token')) return { skipped: true };
-  const patient = await getRecord('patients', patientUuid);
-  if (!patient || patient.deleted_at) return { skipped: true };
-  const stores = ['hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items'];
-  await saveRemoteRecord('patients', patient);
-  for (const store of stores) {
-    const rows = (await listRecords(store)).filter((row) => row.patient_uuid === patientUuid);
-    for (const row of rows) {
-      await saveRemoteRecord(store, row);
-    }
-  }
   await syncNow();
   return { synced: true };
+}
+
+export async function transitionHospitalPatientStatus(patientUuid, status) {
+  if (!navigator.onLine || !localStorage.getItem('dsh_token')) {
+    throw new Error('Patient status transition requires online backend validation.');
+  }
+  const response = await fetch(`${API_URL}/hospital/patients/${patientUuid}/status`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+    },
+    body: JSON.stringify({ status }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Patient status transition failed.';
+    throw new Error(detail);
+  }
+  const db = await database();
+  await db.put('patients', normalizeNumbers(scopeRecordForSave('patients', { ...payload, sync_status: 'synced' })));
+  return payload;
+}
+
+export async function completeHospitalPrescription(prescriptionUuid) {
+  const response = await fetch(`${API_URL}/hospital/prescriptions/${prescriptionUuid}/complete`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Prescription completion failed.';
+    throw new Error(detail);
+  }
+  const db = await database();
+  await db.put('hospital_prescriptions', normalizeNumbers(scopeRecordForSave('hospital_prescriptions', { ...payload, sync_status: 'synced' })));
+  return payload;
+}
+
+export async function completeHospitalLabReport(reportUuid) {
+  const response = await fetch(`${API_URL}/hospital/lab-reports/${reportUuid}/complete`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Lab completion failed.';
+    throw new Error(detail);
+  }
+  const db = await database();
+  await db.put('lab_reports', normalizeNumbers(scopeRecordForSave('lab_reports', { ...payload, sync_status: 'synced' })));
+  return payload;
+}
+
+export async function recalculateHospitalBill(billUuid, paid) {
+  const response = await fetch(`${API_URL}/hospital/bills/${billUuid}/recalculate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+    },
+    body: JSON.stringify({ paid }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Bill recalculation failed.';
+    throw new Error(detail);
+  }
+  const db = await database();
+  await db.put('hospital_bills', normalizeNumbers(scopeRecordForSave('hospital_bills', { ...payload, sync_status: 'synced' })));
+  return payload;
+}
+
+async function cacheHospitalWorkflow(payload) {
+  const db = await database();
+  const pairs = [
+    ['patients', [payload.patient].filter(Boolean)],
+    ['hospital_prescriptions', payload.prescriptions || []],
+    ['hospital_orders', payload.orders || []],
+    ['hospital_tasks', payload.tasks || []],
+    ['lab_reports', payload.lab_reports || []],
+    ['radiology_reports', payload.radiology_reports || []],
+    ['hospital_bills', [payload.bill].filter(Boolean)],
+    ['hospital_bill_items', payload.bill_items || []],
+  ];
+  for (const [store, rows] of pairs) {
+    for (const row of rows) {
+      if (row?.uuid) {
+        await db.put(store, normalizeNumbers(scopeRecordForSave(store, { ...row, sync_status: 'synced' })));
+      }
+    }
+  }
 }
 
 async function clearGeneratedHospitalWorkflow(patientUuid) {
@@ -999,13 +1020,26 @@ export async function syncNow() {
         })),
       }),
     });
-    if (!response.ok) throw new Error('Sync failed');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'Sync failed');
+    const results = payload.results || [];
+    const accepted = new Set(results.filter((item) => item.status === 'accepted').map((item) => item.uuid));
+    const conflicts = new Map(results.filter((item) => item.status === 'conflict' && item.server).map((item) => [item.uuid, item.server]));
+    const rejected = new Set(results.filter((item) => item.status === 'rejected').map((item) => item.uuid));
     for (const item of pending) {
+      if (!accepted.has(item.record_uuid)) {
+        if (conflicts.has(item.record_uuid)) {
+          await db.put(item.entity, normalizeNumbers(scopeRecordForSave(item.entity, { ...conflicts.get(item.record_uuid), sync_status: 'synced' })));
+          await db.put('sync_queue', { ...item, status: 'resolved_conflict', synced_at: new Date().toISOString() });
+        } else if (rejected.has(item.record_uuid)) {
+          await db.put('sync_queue', { ...item, status: 'rejected', synced_at: new Date().toISOString() });
+        }
+        continue;
+      }
       await db.put('sync_queue', { ...item, status: 'synced', synced_at: new Date().toISOString() });
       const current = await db.get(item.entity, item.record_uuid);
       if (current) await db.put(item.entity, { ...current, sync_status: 'synced' });
     }
-    const payload = await response.json();
     await pullRemoteChanges();
     return payload;
   } catch (error) {
@@ -1027,6 +1061,7 @@ export async function pullRemoteChanges() {
     for (const operation of operations) {
       const store = operation.entity;
       if (!STORE_NAMES.includes(store)) continue;
+      if (operation.action === 'conflict') continue;
       const recordUuid = operation.uuid || operation.payload?.uuid;
       if (!recordUuid) continue;
       if (operation.action === 'force_delete') {
@@ -1171,26 +1206,21 @@ export async function importMedicinesFile(file, mapping = {}, rollback = true) {
 export async function importMasterCatalogCsv(file) {
   const text = await file.text();
   const records = parseCsv(text);
-  const db = await database();
-  const tx = db.transaction('master_catalogs', 'readwrite');
-  const now = new Date().toISOString();
   let count = 0;
   for (const record of records) {
     if (!record.name) continue;
-    await tx.store.put({ ...record, uuid: record.uuid || crypto.randomUUID(), updated_at: now, sync_status: 'local' });
+    await saveRecord('master_catalogs', record);
     count += 1;
   }
-  await tx.done;
   await auditLog('bulk_import', 'master_catalogs', crypto.randomUUID(), { count });
   return count;
 }
 
 export async function exportBackupFile(filename = 'msm-full-backup.json', storesToExport = STORE_NAMES) {
-  const db = await database();
   const stores = {};
   const safeStores = [...new Set(storesToExport)].filter((store) => STORE_NAMES.includes(store));
   for (const store of safeStores) {
-    stores[store] = await db.getAll(store);
+    stores[store] = await listRecords(store);
   }
   const payload = {
     app: 'Market Sales Management System',
@@ -1213,12 +1243,16 @@ export async function importBackupFile(file) {
   const payload = JSON.parse(await file.text());
   if (!payload?.stores || typeof payload.stores !== 'object') throw new Error('Invalid backup file.');
   const db = await database();
+  const scope = currentScope();
   let count = 0;
   for (const [store, rows] of Object.entries(payload.stores)) {
     if (!STORE_NAMES.includes(store) || !Array.isArray(rows)) continue;
     for (const row of rows) {
       if (!row?.uuid) continue;
-      await db.put(store, row);
+      if (scope.role !== 'Super Admin' && TENANT_SCOPED_STORES.has(store) && row.license_uuid && row.license_uuid !== scope.license_uuid) {
+        continue;
+      }
+      await db.put(store, normalizeNumbers(scopeRecordForSave(store, row)));
       count += 1;
     }
   }
@@ -1309,12 +1343,18 @@ async function queueOperation(entity, record_uuid, action, data) {
   if (!BUSINESS_SYNC_ENTITIES.has(entity)) return;
   const db = await database();
   const now = new Date().toISOString();
+  const scope = currentScope();
+  const scopedData = scopeRecordForSave(entity, { ...(data || {}) });
   await db.put('sync_queue', {
     uuid: crypto.randomUUID(),
     entity,
     record_uuid,
     action,
-    data,
+    data: scopedData,
+    license_uuid: scopedData.license_uuid || scope.license_uuid || '',
+    business_type: scopedData.business_type || scope.business_type || '',
+    revision: Number(scopedData.revision || 1),
+    is_tombstone: ['delete', 'force_delete'].includes(action),
     client_updated_at: now,
     status: 'pending',
   });
