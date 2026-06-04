@@ -33,6 +33,8 @@ const MODULES = [
   { id: 'mobileWallets', label: 'EasyPaisa / JazzCash', icon: WalletCards },
   { id: 'repairs', label: 'Repairs', icon: Wrench },
   { id: 'repairReceipts', label: 'Repair Receipts', icon: Printer },
+  { id: 'warrantyClaims', label: 'Warranty Claims', icon: KeyRound },
+  { id: 'returns', label: 'Returns', icon: Download },
   { id: 'purchases', label: 'Purchases', icon: Upload },
   { id: 'suppliers', label: 'Suppliers', icon: Smartphone },
   { id: 'expenses', label: 'Expenses', icon: Calculator },
@@ -58,15 +60,19 @@ const SHOP_TYPES = ['Mobile Shop', 'Hospital', 'Grocery Store', 'Pharmacy', 'Gen
 const REPAIR_SHOP_TYPES = new Set(['Mobile Shop', 'Electronics Store']);
 const HOSPITAL_MODULES = new Set(['patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling']);
 const SUPER_ADMIN_MODULES = new Set(['licenses', 'settings']);
+const MOBILE_SHOP_MODULES = new Set(['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'reports', 'backup', 'users', 'warrantyClaims', 'returns']);
+const HOSPITAL_BUSINESS_MODULES = new Set(['dashboard', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'medicines', 'backup', 'users']);
+const GENERIC_SHOP_MODULES = new Set(['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'purchases', 'suppliers', 'expenses', 'reports', 'backup', 'users']);
+const PHARMACY_MODULES = new Set(['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'purchases', 'suppliers', 'expenses', 'reports', 'catalog', 'medicines', 'backup', 'users']);
 
 const ROLE_MODULES = {
   'Super Admin': ['dashboard', 'licenses', 'users', 'settings', 'backup', 'reports', 'notifications'],
-  Admin: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'medicines', 'backup', 'users', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling'],
+  Admin: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'warrantyClaims', 'returns', 'purchases', 'suppliers', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'medicines', 'backup', 'users', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling'],
   'Hospital Owner': ['dashboard', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling', 'expenses', 'notifications', 'reports', 'catalog', 'medicines', 'backup', 'users'],
   Receptionist: ['dashboard', 'patients', 'hospitalBilling', 'notifications'],
-  Manager: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports', 'catalog', 'medicines', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling'],
-  Cashier: ['dashboard', 'pos', 'sales', 'customers', 'credit', 'mobileWallets', 'repairReceipts', 'notifications'],
-  Technician: ['dashboard', 'customers', 'repairs', 'repairReceipts', 'notifications'],
+  Manager: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'warrantyClaims', 'returns', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports', 'catalog', 'medicines', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling'],
+  Cashier: ['dashboard', 'pos', 'sales', 'customers', 'credit', 'mobileWallets', 'repairReceipts', 'warrantyClaims', 'returns', 'notifications'],
+  Technician: ['dashboard', 'customers', 'repairs', 'repairReceipts', 'warrantyClaims', 'notifications'],
   Doctor: ['dashboard', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'expenses', 'notifications', 'reports', 'catalog', 'medicines', 'backup'],
   Compounder: ['dashboard', 'patients', 'hospitalTasks', 'hospitalPharmacy', 'notifications', 'catalog', 'medicines'],
   Assistant: ['dashboard', 'patients', 'hospitalTasks', 'hospitalPharmacy', 'notifications', 'catalog', 'medicines'],
@@ -83,13 +89,27 @@ function userRole(user) {
 
 function modulesForBusiness(modules, brand, role) {
   if (role === 'Super Admin') return modules;
-  const type = brand?.business_type || 'General Store';
-  if (type === 'Hospital') {
-    return modules.filter((item) => ['dashboard', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'medicines', 'backup', 'users'].includes(item.id));
+  const key = businessTypeKey(brand?.business_type || localStorage.getItem('dsh_business_type') || 'General Store');
+  if (key === 'hospital') {
+    return modules.filter((item) => HOSPITAL_BUSINESS_MODULES.has(item.id));
+  }
+  if (key === 'mobile_shop') {
+    return modules.filter((item) => MOBILE_SHOP_MODULES.has(item.id));
+  }
+  if (key === 'pharmacy') {
+    return modules.filter((item) => PHARMACY_MODULES.has(item.id));
   }
   let scoped = modules.filter((item) => !HOSPITAL_MODULES.has(item.id) && !SUPER_ADMIN_MODULES.has(item.id));
-  if (!REPAIR_SHOP_TYPES.has(type)) scoped = scoped.filter((item) => !['repairs', 'repairReceipts'].includes(item.id));
+  scoped = scoped.filter((item) => GENERIC_SHOP_MODULES.has(item.id) || (REPAIR_SHOP_TYPES.has(brand?.business_type) && ['repairs', 'repairReceipts'].includes(item.id)));
   return scoped;
+}
+
+function businessTypeKey(type) {
+  const normalized = String(type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (['mobile_shop', 'mobile'].includes(normalized)) return 'mobile_shop';
+  if (normalized === 'hospital') return 'hospital';
+  if (normalized === 'pharmacy') return 'pharmacy';
+  return 'generic_shop';
 }
 
 function categoriesForBusiness(brand) {
@@ -158,6 +178,27 @@ const RESOURCES = {
     search: ['job_number', 'customer_name', 'device_name', 'imei', 'problem', 'technician', 'status'],
     columns: ['job_number', 'customer_name', 'device_name', 'imei', 'problem', 'technician', 'charges', 'status'],
     fields: [['job_number', 'Job Number'], ['customer_name', 'Customer'], ['device_name', 'Device Name'], ['imei', 'IMEI'], ['problem', 'Problem'], ['technician', 'Technician'], ['charges', 'Charges', 'number'], ['delivery_date', 'Delivery Date', 'date'], ['status', 'Status', 'select', true, ['Received', 'Diagnosed', 'In Progress', 'Waiting Parts', 'Completed', 'Delivered']]],
+  },
+  warranty_claims: {
+    title: 'Warranty Claims',
+    store: 'warranty_claims',
+    search: ['claim_number', 'customer_name', 'product_name', 'imei_1', 'status'],
+    columns: ['claim_number', 'customer_name', 'product_name', 'imei_1', 'claim_date', 'warranty_end', 'status'],
+    fields: [['claim_number', 'Claim Number'], ['customer_name', 'Customer Name'], ['product_name', 'Product Name'], ['imei_1', 'IMEI'], ['claim_date', 'Claim Date', 'date'], ['warranty_start', 'Warranty Start', 'date'], ['warranty_end', 'Warranty End', 'date'], ['issue', 'Issue'], ['resolution', 'Resolution'], ['status', 'Status', 'select', true, ['Open', 'Approved', 'Rejected', 'Resolved']]],
+  },
+  sale_returns: {
+    title: 'Sale Returns',
+    store: 'sale_returns',
+    search: ['return_number', 'invoice_number', 'customer_name', 'status'],
+    columns: ['return_number', 'invoice_number', 'customer_name', 'refund_amount', 'status', 'returned_at'],
+    fields: [['return_number', 'Return Number'], ['invoice_number', 'Invoice Number'], ['customer_name', 'Customer Name'], ['return_type', 'Return Type', 'select', true, ['Refund', 'Exchange']], ['refund_amount', 'Refund Amount', 'number'], ['status', 'Status', 'select', true, ['Completed', 'Pending']], ['returned_at', 'Returned At', 'date']],
+  },
+  purchase_returns: {
+    title: 'Purchase Returns',
+    store: 'purchase_returns',
+    search: ['return_number', 'invoice_number', 'supplier_name', 'status'],
+    columns: ['return_number', 'invoice_number', 'supplier_name', 'total', 'status', 'returned_at'],
+    fields: [['return_number', 'Return Number'], ['invoice_number', 'Invoice Number'], ['supplier_name', 'Supplier Name'], ['total', 'Total', 'number'], ['status', 'Status', 'select', true, ['Completed', 'Pending']], ['returned_at', 'Returned At', 'date']],
   },
   users: {
     title: 'User Management',
@@ -520,6 +561,8 @@ function App() {
           {active === 'mobileWallets' && <CrudModule config={RESOURCES.mobile_wallet_transactions} rows={data.mobile_wallet_transactions || []} refresh={refresh} />}
           {active === 'repairs' && <Repairs rows={data.repairs || []} refresh={refresh} />}
           {active === 'repairReceipts' && <ManualRepairReceipts rows={data.manual_repair_receipts || []} brand={brand} refresh={refresh} />}
+          {active === 'warrantyClaims' && <CrudModule config={RESOURCES.warranty_claims} rows={data.warranty_claims || []} refresh={refresh} />}
+          {active === 'returns' && <ReturnsModule data={data} refresh={refresh} />}
           {active === 'purchases' && <Purchases data={data} refresh={refresh} />}
           {active === 'suppliers' && <CrudModule config={RESOURCES.suppliers} rows={data.suppliers || []} refresh={refresh} extraActions={(row) => <button className="ghost-btn" onClick={() => printLedger(row, data.supplier_ledgers || [], 'supplier_uuid')}><Printer size={15} /> Ledger</button>} />}
           {active === 'expenses' && <CrudModule config={RESOURCES.expenses} rows={data.expenses || []} refresh={refresh} />}
@@ -1226,6 +1269,10 @@ function Sales({ rows, brand, refresh }) {
 
 function Repairs({ rows, refresh }) {
   return <CrudModule config={RESOURCES.repairs} rows={rows} refresh={refresh} extraActions={(row) => <><button className="ghost-btn" onClick={() => printJobCard(row)}><Printer size={15} /> Job Card</button><select className="mini-select" value={row.status || 'Received'} onChange={async (e) => { await updateRepairStatus(row, e.target.value, 'Status updated'); await refresh(); }}>{['Received', 'Diagnosed', 'In Progress', 'Waiting Parts', 'Completed', 'Delivered'].map((status) => <option key={status}>{status}</option>)}</select></>} />;
+}
+
+function ReturnsModule({ data, refresh }) {
+  return <div className="stack"><CrudModule config={RESOURCES.sale_returns} rows={data.sale_returns || []} refresh={refresh} /><CrudModule config={RESOURCES.purchase_returns} rows={data.purchase_returns || []} refresh={refresh} /></div>;
 }
 
 function ManualRepairReceipts({ rows, brand, refresh }) {
