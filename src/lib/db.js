@@ -316,6 +316,12 @@ function scopedRecordVisible(store, record) {
 
 function scopeRecordForSave(store, record) {
   const scope = currentScope();
+  if (['products', 'sale_items', 'purchase_items', 'imei_registry'].includes(store) && record.imei_numbers) {
+    record.imei_numbers = normalizeImeiList(record.imei_numbers);
+    record.imei = record.imei || record.imei_numbers[0] || '';
+    record.imei_1 = record.imei_1 || record.imei_numbers[0] || '';
+    record.imei_2 = record.imei_2 || record.imei_numbers[1] || '';
+  }
   if (scope.role !== 'Super Admin' && TENANT_SCOPED_STORES.has(store) && scope.license_uuid) {
     record.license_uuid = scope.license_uuid;
   }
@@ -323,6 +329,20 @@ function scopeRecordForSave(store, record) {
     record.business_type = scope.business_type;
   }
   return record;
+}
+
+function normalizeImeiList(value) {
+  if (Array.isArray(value)) return [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))];
+  if (typeof value === 'string') {
+    try {
+      const decoded = JSON.parse(value);
+      if (Array.isArray(decoded)) return normalizeImeiList(decoded);
+    } catch {
+      // Plain IMEI text.
+    }
+    return [...new Set(value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean))];
+  }
+  return value ? [String(value).trim()].filter(Boolean) : [];
 }
 
 export async function saveUserAccount(record) {
@@ -1537,13 +1557,20 @@ export function downloadPdf(filename, title, lines) {
   const link = document.createElement('a');
   link.href = url;
   link.download = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
+  link.style.display = 'none';
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+    link.remove();
+  }, 1000);
 }
 
 export function whatsAppShare(phone, message) {
   const cleanPhone = String(phone || '').replace(/[^\d]/g, '');
-  const url = `https://wa.me/${cleanPhone || ''}?text=${encodeURIComponent(message)}`;
+  const url = cleanPhone
+    ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`
+    : `https://wa.me/?text=${encodeURIComponent(message)}`;
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
