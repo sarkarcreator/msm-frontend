@@ -1566,12 +1566,39 @@ export function downloadPdf(filename, title, lines) {
   }, 1000);
 }
 
+export function normalizePakistanPhone(phone) {
+  let cleanPhone = String(phone || '').trim().replace(/[^\d]/g, '');
+  if (cleanPhone.startsWith('00')) cleanPhone = cleanPhone.slice(2);
+  if (cleanPhone.startsWith('0')) cleanPhone = `92${cleanPhone.slice(1)}`;
+  if (cleanPhone.length === 10 && cleanPhone.startsWith('3')) cleanPhone = `92${cleanPhone}`;
+  return cleanPhone;
+}
+
+function notifyUser(message) {
+  window.dispatchEvent(new CustomEvent('dsh:toast', { detail: message }));
+}
+
 export function whatsAppShare(phone, message) {
-  const cleanPhone = String(phone || '').replace(/[^\d]/g, '');
-  const url = cleanPhone
-    ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`
-    : `https://wa.me/?text=${encodeURIComponent(message)}`;
-  window.open(url, '_blank', 'noopener,noreferrer');
+  const normalizedPhone = normalizePakistanPhone(phone);
+  if (!normalizedPhone) {
+    notifyUser('Customer mobile number missing');
+    console.warn('WhatsApp share blocked: customer mobile number missing', { phone });
+    return null;
+  }
+
+  const whatsappUrl = `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(message || '')}`;
+  console.info('Generated WhatsApp URL', {
+    originalPhone: phone,
+    normalizedPhone,
+    whatsappUrl,
+  });
+
+  const popup = window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+  if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+    window.location.href = whatsappUrl;
+  }
+
+  return { whatsappUrl, normalizedPhone };
 }
 
 export function receiptQrData(record) {
