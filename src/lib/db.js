@@ -625,10 +625,15 @@ export async function completeHospitalPrescription(prescriptionUuid) {
   return payload;
 }
 
-export async function completeHospitalLabReport(reportUuid) {
+export async function completeHospitalLabReport(reportUuid, details = {}) {
   const response = await fetch(`${API_URL}/hospital/lab-reports/${reportUuid}/complete`, {
     method: 'POST',
-    headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+    },
+    body: JSON.stringify(details),
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -637,6 +642,47 @@ export async function completeHospitalLabReport(reportUuid) {
   }
   const db = await database();
   await db.put('lab_reports', normalizeNumbers(scopeRecordForSave('lab_reports', { ...payload, sync_status: 'synced' })));
+  return payload;
+}
+
+export async function completeHospitalRadiologyReport(reportUuid, details = {}) {
+  const response = await fetch(`${API_URL}/hospital/radiology-reports/${reportUuid}/complete`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+    },
+    body: JSON.stringify(details),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Radiology completion failed.';
+    throw new Error(detail);
+  }
+  const db = await database();
+  await db.put('radiology_reports', normalizeNumbers(scopeRecordForSave('radiology_reports', { ...payload, sync_status: 'synced' })));
+  return payload;
+}
+
+export async function reviewHospitalReport(store, reportUuid, doctor_review_status) {
+  const endpoint = store === 'radiology_reports' ? 'radiology-reports' : 'lab-reports';
+  const response = await fetch(`${API_URL}/hospital/${endpoint}/${reportUuid}/review`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+    },
+    body: JSON.stringify({ doctor_review_status }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Report review failed.';
+    throw new Error(detail);
+  }
+  const db = await database();
+  await db.put(store, normalizeNumbers(scopeRecordForSave(store, { ...payload, sync_status: 'synced' })));
   return payload;
 }
 
@@ -657,6 +703,30 @@ export async function recalculateHospitalBill(billUuid, paid) {
   }
   const db = await database();
   await db.put('hospital_bills', normalizeNumbers(scopeRecordForSave('hospital_bills', { ...payload, sync_status: 'synced' })));
+  return payload;
+}
+
+export async function saveHospitalBillPayment(billUuid, { paid_amount, payment_method = 'Cash' } = {}) {
+  const response = await fetch(`${API_URL}/hospital/bills/${billUuid}/payment`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+    },
+    body: JSON.stringify({ paid_amount, payment_method }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Bill payment save failed.';
+    throw new Error(detail);
+  }
+  const db = await database();
+  if (payload.bill?.uuid) await db.put('hospital_bills', normalizeNumbers(scopeRecordForSave('hospital_bills', { ...payload.bill, sync_status: 'synced' })));
+  if (payload.patient?.uuid) await db.put('patients', normalizeNumbers(scopeRecordForSave('patients', { ...payload.patient, sync_status: 'synced' })));
+  for (const notification of payload.notifications || []) {
+    if (notification?.uuid) await db.put('notifications', normalizeNumbers(scopeRecordForSave('notifications', { ...notification, sync_status: 'synced' })));
+  }
   return payload;
 }
 
