@@ -293,6 +293,13 @@ const HOSPITAL_REMOTE_STORES = [
   'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items',
 ];
 
+const MOBILE_SHOP_REMOTE_STORES = [
+  'products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items',
+  'inventory_transactions', 'cashbook', 'customer_ledgers', 'supplier_ledgers',
+  'imei_registry', 'imei_movements', 'warranty_claims', 'sale_returns', 'sale_return_items',
+  'purchase_returns', 'purchase_return_items',
+];
+
 const HEADER_LABELS = {
   product_name: 'Product Name',
   imei: 'IMEI / Serial',
@@ -366,7 +373,10 @@ function App() {
     if (auth.token && navigator.onLine && (brand?.business_type === 'Hospital' || localStorage.getItem('dsh_business_type') === 'Hospital')) {
       await hydrateRemoteStores(HOSPITAL_REMOTE_STORES);
     }
-    const stores = ['products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items', 'expenses', 'repairs', 'repair_updates', 'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'medicines', 'payments', 'cashbook', 'users', 'settings', 'notifications', 'licenses', 'audit_logs', 'inventory_transactions', 'customer_ledgers', 'supplier_ledgers', 'sync_queue'];
+    if (auth.token && navigator.onLine && (brand?.business_type === 'Mobile Shop' || localStorage.getItem('dsh_business_type') === 'Mobile Shop')) {
+      await hydrateRemoteStores(MOBILE_SHOP_REMOTE_STORES);
+    }
+    const stores = ['products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items', 'expenses', 'repairs', 'repair_updates', 'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'medicines', 'payments', 'cashbook', 'users', 'settings', 'notifications', 'licenses', 'audit_logs', 'inventory_transactions', 'customer_ledgers', 'supplier_ledgers', 'imei_registry', 'imei_movements', 'warranty_claims', 'sale_returns', 'sale_return_items', 'purchase_returns', 'purchase_return_items', 'sync_queue'];
     const entries = await Promise.all(stores.map(async (store) => [store, await listRecords(store)]));
     const currentBrand = await getBrandSettings();
     setData(Object.fromEntries(entries));

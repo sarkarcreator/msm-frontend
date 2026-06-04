@@ -10,7 +10,9 @@ export const STORE_NAMES = [
   'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants',
   'hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports',
   'radiology_reports', 'hospital_bills', 'hospital_bill_items',
-  'master_catalogs', 'medicines', 'licenses', 'audit_logs', 'sync_queue',
+  'master_catalogs', 'medicines', 'imei_registry', 'imei_movements',
+  'warranty_claims', 'sale_returns', 'sale_return_items', 'purchase_returns',
+  'purchase_return_items', 'licenses', 'audit_logs', 'sync_queue',
 ];
 
 const MONEY_FIELDS = new Set([
@@ -53,7 +55,9 @@ const BUSINESS_SYNC_ENTITIES = new Set([
   'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants',
   'hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports',
   'radiology_reports', 'hospital_bills', 'hospital_bill_items',
-  'master_catalogs', 'medicines', 'licenses',
+  'master_catalogs', 'medicines', 'imei_registry', 'imei_movements',
+  'warranty_claims', 'sale_returns', 'sale_return_items', 'purchase_returns',
+  'purchase_return_items', 'licenses',
 ]);
 
 const TENANT_SCOPED_STORES = new Set([
@@ -63,13 +67,15 @@ const TENANT_SCOPED_STORES = new Set([
   'settings', 'notifications', 'inventory_transactions', 'manual_repair_receipts',
   'mobile_wallet_transactions', 'patients', 'assistants', 'hospital_prescriptions',
   'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports',
-  'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'sync_queue',
+  'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'imei_registry',
+  'imei_movements', 'warranty_claims', 'sale_returns', 'sale_return_items',
+  'purchase_returns', 'purchase_return_items', 'sync_queue',
 ]);
 
 const BUSINESS_TYPED_STORES = new Set(['products', 'categories', 'brands', 'master_catalogs', 'medicines']);
 
 export async function database() {
-  return openDB('dsh-production-db', 7, {
+  return openDB('dsh-production-db', 8, {
     upgrade(db) {
       for (const store of STORE_NAMES) {
         if (!db.objectStoreNames.contains(store)) {
@@ -215,6 +221,13 @@ function apiResourceName(resource) {
     hospital_bills: 'hospital-bills',
     hospital_bill_items: 'hospital-bill-items',
     master_catalogs: 'master-catalogs',
+    imei_registry: 'imei-registry',
+    imei_movements: 'imei-movements',
+    warranty_claims: 'warranty-claims',
+    sale_returns: 'sale-returns',
+    sale_return_items: 'sale-return-items',
+    purchase_returns: 'purchase-returns',
+    purchase_return_items: 'purchase-return-items',
     medicine_categories: 'medicine-categories',
     medicine_manufacturers: 'medicine-manufacturers',
     audit_logs: 'audit-logs',
@@ -240,6 +253,13 @@ async function markRecordSynced(resource, uuid) {
     'hospital-bills': 'hospital_bills',
     'hospital-bill-items': 'hospital_bill_items',
     'master-catalogs': 'master_catalogs',
+    'imei-registry': 'imei_registry',
+    'imei-movements': 'imei_movements',
+    'warranty-claims': 'warranty_claims',
+    'sale-returns': 'sale_returns',
+    'sale-return-items': 'sale_return_items',
+    'purchase-returns': 'purchase_returns',
+    'purchase-return-items': 'purchase_return_items',
     'medicine-categories': 'medicine_categories',
     'medicine-manufacturers': 'medicine_manufacturers',
     'audit-logs': 'audit_logs',
@@ -386,7 +406,18 @@ async function deleteLicenseUsersLocally(db, licenseUuid, mode = 'soft') {
 }
 
 export async function createSale({ customer_uuid, payment_type, discount, tax, paid, due_date, cart }) {
-  if (!cart.length) throw new Error('Cart is empty.');
+  if (!cart?.length) throw new Error('Cart is empty.');
+  if (shouldUseMobileShopBackend()) {
+    try {
+      const payload = await mobileShopRequest('sales', {
+        customer_uuid, payment_type, discount, tax, paid, due_date, cart,
+      });
+      await cacheMobileShopWorkflow(payload);
+      return payload.sale;
+    } catch (error) {
+      if (navigator.onLine) throw error;
+    }
+  }
   const db = await database();
   const products = await listRecords('products');
   const productMap = new Map(products.map((product) => [product.uuid, product]));
@@ -751,6 +782,55 @@ async function cacheHospitalWorkflow(payload) {
   }
 }
 
+function shouldUseMobileShopBackend() {
+  const scope = currentScope();
+  return navigator.onLine && Boolean(localStorage.getItem('dsh_token')) && scope.business_type === 'Mobile Shop';
+}
+
+async function mobileShopRequest(endpoint, data) {
+  const response = await fetch(`${API_URL}/mobile-shop/${endpoint}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+      'X-Device-Id': localStorage.getItem('dsh_device_id') || ensureDeviceId(),
+    },
+    body: JSON.stringify(data),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Mobile Shop transaction failed.';
+    throw new Error(detail);
+  }
+  return payload;
+}
+
+async function cacheMobileShopWorkflow(payload) {
+  const db = await database();
+  const pairs = [
+    ['sales', [payload.sale].filter(Boolean)],
+    ['sale_items', payload.sale_items || []],
+    ['purchases', [payload.purchase].filter(Boolean)],
+    ['purchase_items', payload.purchase_items || []],
+    ['products', payload.products || []],
+    ['imei_registry', payload.imeis || []],
+    ['imei_movements', payload.imei_movements || []],
+    ['warranty_claims', [payload.warranty_claim].filter(Boolean)],
+    ['sale_returns', [payload.sale_return].filter(Boolean)],
+    ['sale_return_items', payload.sale_return_items || []],
+    ['purchase_returns', [payload.purchase_return].filter(Boolean)],
+    ['purchase_return_items', payload.purchase_return_items || []],
+  ];
+  for (const [store, rows] of pairs) {
+    for (const row of rows) {
+      if (row?.uuid) {
+        await db.put(store, normalizeNumbers(scopeRecordForSave(store, { ...row, sync_status: 'synced' })));
+      }
+    }
+  }
+}
+
 async function clearGeneratedHospitalWorkflow(patientUuid) {
   for (const store of ['hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items']) {
     const rows = await listRecords(store);
@@ -761,7 +841,18 @@ async function clearGeneratedHospitalWorkflow(patientUuid) {
 }
 
 export async function createPurchase({ supplier_uuid, invoice_number, cart, paid = 0 }) {
-  if (!cart.length) throw new Error('Purchase cart is empty.');
+  if (!cart?.length) throw new Error('Purchase cart is empty.');
+  if (shouldUseMobileShopBackend()) {
+    try {
+      const payload = await mobileShopRequest('purchases', {
+        supplier_uuid, invoice_number, cart, paid,
+      });
+      await cacheMobileShopWorkflow(payload);
+      return payload.purchase;
+    } catch (error) {
+      if (navigator.onLine) throw error;
+    }
+  }
   const total = cart.reduce((sum, item) => sum + Number(item.quantity) * Number(item.cost_price), 0);
   const purchase = await saveRecord('purchases', {
     invoice_number: invoice_number || await nextNumber('purchases', 'PUR'),
@@ -806,6 +897,68 @@ export async function createPurchase({ supplier_uuid, invoice_number, cart, paid
   }
 
   return purchase;
+}
+
+export async function searchMobileShopImei(query = '', filters = {}) {
+  if (shouldUseMobileShopBackend()) {
+    const params = new URLSearchParams({ q: query || '', per_page: String(filters.per_page || 25) });
+    if (filters.status) params.set('status', filters.status);
+    const response = await fetch(`${API_URL}/mobile-shop/imeis/search?${params}`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'IMEI search failed.');
+    const rows = payload.data || payload;
+    const db = await database();
+    for (const row of rows) {
+      if (row?.uuid) await db.put('imei_registry', normalizeNumbers(scopeRecordForSave('imei_registry', { ...row, sync_status: 'synced' })));
+    }
+    return rows;
+  }
+  const term = String(query || '').toLowerCase();
+  return (await listRecords('imei_registry')).filter((row) => {
+    if (filters.status && row.status !== filters.status) return false;
+    return !term || [row.imei_1, row.imei_2, row.serial_number, row.customer_name, row.invoice_number]
+      .join(' ')
+      .toLowerCase()
+      .includes(term);
+  });
+}
+
+export async function createWarrantyClaim(record) {
+  const payload = shouldUseMobileShopBackend()
+    ? await mobileShopRequest('warranty-claims', record)
+    : { warranty_claim: await saveRecord('warranty_claims', record) };
+  await cacheMobileShopWorkflow(payload);
+  return payload.warranty_claim;
+}
+
+export async function createSaleReturn(record) {
+  const payload = shouldUseMobileShopBackend()
+    ? await mobileShopRequest('sale-returns', record)
+    : { sale_return: await saveRecord('sale_returns', record) };
+  await cacheMobileShopWorkflow(payload);
+  return payload.sale_return;
+}
+
+export async function createPurchaseReturn(record) {
+  const payload = shouldUseMobileShopBackend()
+    ? await mobileShopRequest('purchase-returns', record)
+    : { purchase_return: await saveRecord('purchase_returns', record) };
+  await cacheMobileShopWorkflow(payload);
+  return payload.purchase_return;
+}
+
+export async function fetchMobileShopReport(type) {
+  if (shouldUseMobileShopBackend()) {
+    const response = await fetch(`${API_URL}/mobile-shop/reports/${encodeURIComponent(type)}`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'Mobile Shop report failed.');
+    return payload.data || [];
+  }
+  return generateReport(type.replace(/-/g, '_'));
 }
 
 export async function receiveCustomerPayment({ customer_uuid, amount, method, notes }) {
