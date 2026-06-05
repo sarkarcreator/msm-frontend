@@ -1227,11 +1227,18 @@ function POS2({ data, brand, refresh }) {
   const total = subtotal - Number(payment.discount || 0) + Number(payment.tax || 0);
   const paid = payment.payment_type === 'credit' ? 0 : Number(payment.paid || total);
   const draftInvoice = { invoice_number: 'DRAFT', customer_name: customer?.name || quick.name || 'Walk-in Customer', subtotal, discount: payment.discount, tax: payment.tax, total, paid, balance: Math.max(0, total - paid), sold_at: new Date().toISOString() };
+  const usesImeiTracking = businessTypeKey(brand?.business_type) === 'mobile_shop';
 
   function addToCart(product) {
     setCart((items) => items.some((item) => item.product_uuid === product.uuid)
       ? items.map((item) => item.product_uuid === product.uuid ? { ...item, quantity: item.quantity + 1 } : item)
-      : [...items, { product_uuid: product.uuid, product_name: product.product_name, imei: product.imei, imei_numbers: imeiListText(product), quantity: 1, price: Number(product.sale_price || 0) }]);
+      : [...items, {
+        product_uuid: product.uuid,
+        product_name: product.product_name,
+        ...(usesImeiTracking ? { imei: product.imei, imei_numbers: imeiListText(product) } : {}),
+        quantity: 1,
+        price: Number(product.sale_price || 0),
+      }]);
   }
 
   async function completeSale() {
