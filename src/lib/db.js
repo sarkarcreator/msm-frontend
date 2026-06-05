@@ -427,9 +427,10 @@ async function deleteLicenseUsersLocally(db, licenseUuid, mode = 'soft') {
 
 export async function createSale({ customer_uuid, payment_type, discount, tax, paid, due_date, cart }) {
   if (!cart?.length) throw new Error('Cart is empty.');
-  if (shouldUseMobileShopBackend()) {
+  const retailPrefix = retailBackendPrefix();
+  if (retailPrefix) {
     try {
-      const payload = await mobileShopRequest('sales', {
+      const payload = await retailEnterpriseRequest(retailPrefix, 'sales', {
         customer_uuid, payment_type, discount, tax, paid, due_date, cart,
       });
       await cacheMobileShopWorkflow(payload);
@@ -802,13 +803,32 @@ async function cacheHospitalWorkflow(payload) {
   }
 }
 
-function shouldUseMobileShopBackend() {
+function businessTypeKey(type) {
+  const normalized = String(type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (['mobile_shop', 'mobile'].includes(normalized)) return 'mobile_shop';
+  if (['general_store', 'grocery_store', 'grocery', 'shopping_mall', 'traders', 'retail_shop'].includes(normalized)) return 'general_store';
+  return normalized;
+}
+
+function retailBackendPrefix() {
   const scope = currentScope();
-  return navigator.onLine && Boolean(localStorage.getItem('dsh_token')) && scope.business_type === 'Mobile Shop';
+  if (!navigator.onLine || !localStorage.getItem('dsh_token')) return '';
+  const key = businessTypeKey(scope.business_type);
+  if (key === 'mobile_shop') return 'mobile-shop';
+  if (key === 'general_store') return 'general-store';
+  return '';
+}
+
+function shouldUseMobileShopBackend() {
+  return retailBackendPrefix() === 'mobile-shop';
 }
 
 async function mobileShopRequest(endpoint, data) {
-  const response = await fetch(`${API_URL}/mobile-shop/${endpoint}`, {
+  return retailEnterpriseRequest('mobile-shop', endpoint, data);
+}
+
+async function retailEnterpriseRequest(prefix, endpoint, data) {
+  const response = await fetch(`${API_URL}/${prefix}/${endpoint}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -820,7 +840,7 @@ async function mobileShopRequest(endpoint, data) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Mobile Shop transaction failed.';
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Retail transaction failed.';
     throw new Error(detail);
   }
   return payload;
@@ -862,9 +882,10 @@ async function clearGeneratedHospitalWorkflow(patientUuid) {
 
 export async function createPurchase({ supplier_uuid, invoice_number, cart, paid = 0 }) {
   if (!cart?.length) throw new Error('Purchase cart is empty.');
-  if (shouldUseMobileShopBackend()) {
+  const retailPrefix = retailBackendPrefix();
+  if (retailPrefix) {
     try {
-      const payload = await mobileShopRequest('purchases', {
+      const payload = await retailEnterpriseRequest(retailPrefix, 'purchases', {
         supplier_uuid, invoice_number, cart, paid,
       });
       await cacheMobileShopWorkflow(payload);
@@ -1195,6 +1216,13 @@ export async function reportData(type) {
   const today = new Date().toISOString().slice(0, 10);
   const nearExpiryLimit = Date.now() + 90 * 86400000;
   const medicineProducts = products.filter((product) => product.category === 'Medicine' || product.medicine_uuid);
+  const topProducts = Object.values(saleItems.reduce((acc, item) => {
+    const key = item.product_uuid || item.product_name || 'Unknown';
+    acc[key] ||= { uuid: key, product_name: item.product_name || 'Unknown', quantity: 0, revenue: 0 };
+    acc[key].quantity += Number(item.quantity || 0);
+    acc[key].revenue += Number(item.quantity || 0) * Number(item.price || 0);
+    return acc;
+  }, {})).sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0)).slice(0, 50);
   const rows = {
     daily_sales: sales.filter((sale) => sameDay(sale.sold_at)),
     weekly_sales: sales.filter((sale) => withinDays(sale.sold_at, 7)),
@@ -1203,6 +1231,10 @@ export async function reportData(type) {
     product_sales: saleItems,
     profit: sales.map((sale) => ({ invoice_number: sale.invoice_number, total: sale.total, profit: sale.profit, sold_at: sale.sold_at })),
     inventory: products,
+    top_products: topProducts,
+    low_stock: products.filter((product) => Number(product.quantity || 0) <= Number(product.low_stock_threshold || 0)),
+    near_expiry: products.filter((product) => product.expiry_date && new Date(product.expiry_date).getTime() >= Date.now() && new Date(product.expiry_date).getTime() <= nearExpiryLimit),
+    expired_products: products.filter((product) => product.expiry_date && String(product.expiry_date).slice(0, 10) < today),
     customers,
     expenses,
     suppliers,
@@ -1451,8 +1483,9 @@ export async function importMasterCatalogCsv(file) {
   const records = parseCsv(text);
   let count = 0;
   for (const record of records) {
-    if (!record.name) continue;
-    await saveRecord('master_catalogs', record);
+    const productName = record.product_name || record.name;
+    if (!productName) continue;
+    await saveRecord('master_catalogs', { ...record, name: productName, product_name: productName });
     count += 1;
   }
   await auditLog('bulk_import', 'master_catalogs', crypto.randomUUID(), { count });

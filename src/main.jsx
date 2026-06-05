@@ -62,8 +62,10 @@ const HOSPITAL_MODULES = new Set(['patients', 'assistants', 'hospitalPharmacy', 
 const SUPER_ADMIN_MODULES = new Set(['licenses', 'settings']);
 const MOBILE_SHOP_MODULES = new Set(['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'purchases', 'suppliers', 'expenses', 'reports', 'backup', 'users', 'warrantyClaims', 'returns']);
 const HOSPITAL_BUSINESS_MODULES = new Set(['dashboard', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'medicines', 'backup', 'users']);
-const GENERIC_SHOP_MODULES = new Set(['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'purchases', 'suppliers', 'expenses', 'reports', 'backup', 'users']);
+const GENERIC_SHOP_MODULES = new Set(['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'purchases', 'suppliers', 'expenses', 'reports', 'catalog', 'backup', 'users']);
 const PHARMACY_MODULES = new Set(['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'purchases', 'suppliers', 'expenses', 'reports', 'catalog', 'medicines', 'backup', 'users']);
+const GENERAL_STORE_CATEGORIES = ['Beverages', 'Water', 'Juices', 'Biscuits', 'Snacks', 'Dairy', 'Grocery', 'Confectionery', 'Personal Care', 'Household'];
+const RETAIL_UNITS = ['Single Unit', 'Half Carton', 'Carton', 'Box', 'Pack', 'Dozen', 'Bag', 'Bottle', 'pcs', 'kg', 'gram', 'liter', 'meter'];
 
 const ROLE_MODULES = {
   'Super Admin': ['dashboard', 'licenses', 'users', 'settings', 'backup', 'reports', 'notifications'],
@@ -109,6 +111,7 @@ function businessTypeKey(type) {
   if (['mobile_shop', 'mobile'].includes(normalized)) return 'mobile_shop';
   if (normalized === 'hospital') return 'hospital';
   if (normalized === 'pharmacy') return 'pharmacy';
+  if (['general_store', 'grocery_store', 'grocery', 'shopping_mall', 'traders', 'retail_shop'].includes(normalized)) return 'general_store';
   return 'generic_shop';
 }
 
@@ -118,14 +121,43 @@ function categoriesForBusiness(brand) {
     'Mobile Shop': ['Mobile Phones', 'Accessories', 'Spare Parts', 'Electronics'],
     'Electronics Store': ['Electronics', 'Accessories', 'Spare Parts'],
     'Pharmacy': ['Medicine', 'Healthcare', 'Personal Care', 'Baby Care'],
-    'Grocery Store': ['Grocery', 'General', 'Household', 'Beverages'],
-    'General Store': ['General', 'Grocery', 'Household', 'Beverages'],
-    'Shopping Mall': ['General', 'Grocery', 'Electronics', 'Clothing', 'Household'],
+    'Grocery Store': GENERAL_STORE_CATEGORIES,
+    'General Store': GENERAL_STORE_CATEGORIES,
+    'Shopping Mall': [...GENERAL_STORE_CATEGORIES, 'Electronics', 'Clothing'],
     'Clothing Store': ['Clothing', 'Footwear', 'Accessories'],
     'Hardware Store': ['Hardware', 'Tools', 'Electrical', 'Plumbing'],
     Hospital: ['Medicine', 'Healthcare', 'Lab Supplies', 'General'],
   };
   return groups[type] || groups['General Store'];
+}
+
+function catalogPresetRecord(item, businessType) {
+  const [
+    productName,
+    category,
+    itemBrand,
+    subcategory = '',
+    packSize = '',
+    unit = 'Single Unit',
+    defaultCost = 0,
+    defaultPrice = 0,
+    barcode = '',
+  ] = item;
+  return {
+    name: productName,
+    product_name: productName,
+    business_type: businessType,
+    category,
+    subcategory,
+    brand: itemBrand,
+    barcode,
+    pack_size: packSize,
+    type: subcategory || category,
+    unit,
+    default_cost: Number(defaultCost || 0),
+    default_price: Number(defaultPrice || 0),
+    notes: 'Built-in starter catalog',
+  };
 }
 
 const RESOURCES = {
@@ -136,8 +168,8 @@ const RESOURCES = {
     columns: ['product_name', 'category', 'brand', 'imei_numbers', 'unit', 'package_quantity', 'units_per_package', 'quantity', 'purchase_price', 'package_cost_price', 'total_cost', 'sale_price', 'low_stock_threshold', 'status'],
     rowMap: inventoryRows,
     fields: [
-      ['product_name', 'Product Name', 'text', true], ['category', 'Category', 'select', true, ['General', 'Grocery', 'Pharmacy', 'Electronics', 'Clothing', 'Hardware', 'Accessories', 'Spare Parts']], ['brand', 'Brand'], ['model', 'Model'],
-      ['sku', 'SKU'], ['barcode', 'Barcode'], ['unit', 'Unit', 'select', true, ['pcs', 'kg', 'gram', 'liter', 'meter', 'box', 'pack']], ['batch_number', 'Batch Number'],
+      ['product_name', 'Product Name', 'text', true], ['category', 'Category', 'select', true, ['General', ...GENERAL_STORE_CATEGORIES, 'Pharmacy', 'Electronics', 'Clothing', 'Hardware', 'Accessories', 'Spare Parts']], ['brand', 'Brand'], ['model', 'Model'],
+      ['sku', 'SKU'], ['barcode', 'Barcode'], ['unit', 'Unit', 'select', true, RETAIL_UNITS], ['variant_type', 'Variant Type', 'select', false, RETAIL_UNITS], ['pack_size', 'Pack Size'], ['batch_number', 'Batch Number'],
       ['expiry_date', 'Expiry Date', 'date'], ['imei_numbers', 'IMEI Numbers'], ['purchase_price', 'Purchase Price', 'number'], ['sale_price', 'Sale Price', 'number'],
       ['quantity', 'Quantity', 'number'], ['low_stock_threshold', 'Low Stock Warning', 'number'], ['manufacturer', 'Manufacturer'], ['warranty', 'Warranty'], ['supplier_name', 'Supplier'],
     ],
@@ -229,10 +261,10 @@ const RESOURCES = {
   master_catalogs: {
     title: 'Master Catalog',
     store: 'master_catalogs',
-    search: ['name', 'business_type', 'category', 'brand', 'type', 'unit', 'notes'],
-    columns: ['name', 'business_type', 'category', 'brand', 'type', 'unit', 'notes'],
-    fields: [['name', 'Name', 'text', true], ['business_type', 'Business Type', 'select', true, SHOP_TYPES], ['category', 'Category'], ['brand', 'Brand'], ['type', 'Type'], ['unit', 'Unit'], ['notes', 'Notes']],
-    defaultRecord: ({ brand }) => ({ business_type: brand?.business_type || 'General Store', unit: 'pcs' }),
+    search: ['name', 'product_name', 'business_type', 'category', 'subcategory', 'brand', 'barcode', 'pack_size', 'unit', 'notes'],
+    columns: ['product_name', 'category', 'subcategory', 'brand', 'barcode', 'pack_size', 'unit', 'default_cost', 'default_price'],
+    fields: [['product_name', 'Product Name', 'text', true], ['business_type', 'Business Type', 'select', true, SHOP_TYPES], ['category', 'Category'], ['subcategory', 'Subcategory'], ['brand', 'Brand'], ['barcode', 'Barcode'], ['pack_size', 'Pack Size'], ['unit', 'Unit', 'select', true, RETAIL_UNITS], ['default_cost', 'Default Cost', 'number'], ['default_price', 'Default Price', 'number'], ['notes', 'Notes']],
+    defaultRecord: ({ brand }) => ({ business_type: brand?.business_type || 'General Store', unit: 'Single Unit', default_cost: 0, default_price: 0 }),
   },
   settings: {
     title: 'Admin Panel Settings',
@@ -282,14 +314,32 @@ const CATALOG_PRESETS = {
     ['SIM Jacket', 'Accessories', 'Generic'], ['Memory Card 64GB', 'Accessories', 'Generic'], ['AirPods Case', 'Accessories', 'Apple'], ['Mobile Battery', 'Spare Parts', 'Generic'],
   ],
   'Grocery Store': [
-    ['Sugar 1kg', 'Grocery', 'General'], ['Rice 5kg', 'Grocery', 'General'], ['Wheat Flour 10kg', 'Grocery', 'General'], ['Cooking Oil 1L', 'Grocery', 'General'],
-    ['Tea 190g', 'Grocery', 'General'], ['Milk Pack 1L', 'Beverages', 'General'], ['Biscuit Pack', 'Grocery', 'General'], ['Noodles Pack', 'Grocery', 'General'],
-    ['Soap', 'Household', 'General'], ['Detergent Powder', 'Household', 'General'], ['Toothpaste', 'Personal Care', 'General'], ['Shampoo', 'Personal Care', 'General'],
+    ['Coca Cola', 'Beverages', 'Coca Cola', 'Soft Drink', '500ml', 'Single Unit'], ['Pepsi', 'Beverages', 'Pepsi', 'Soft Drink', '500ml', 'Single Unit'], ['7UP', 'Beverages', '7UP', 'Soft Drink', '500ml', 'Single Unit'], ['Mountain Dew', 'Beverages', 'Mountain Dew', 'Soft Drink', '500ml', 'Single Unit'],
+    ['Sting', 'Beverages', 'Sting', 'Energy Drink', '250ml', 'Single Unit'], ['Sprite', 'Beverages', 'Sprite', 'Soft Drink', '500ml', 'Single Unit'], ['Fanta', 'Beverages', 'Fanta', 'Soft Drink', '500ml', 'Single Unit'], ['Mirinda', 'Beverages', 'Mirinda', 'Soft Drink', '500ml', 'Single Unit'],
+    ['Pakola', 'Beverages', 'Pakola', 'Soft Drink', '500ml', 'Single Unit'], ['Next Cola', 'Beverages', 'Next Cola', 'Soft Drink', '500ml', 'Single Unit'],
+    ['Nestle Pure Life', 'Water', 'Nestle', 'Mineral Water', '1.5L', 'Single Unit'], ['Aquafina', 'Water', 'Aquafina', 'Mineral Water', '1.5L', 'Single Unit'], ['Kinley', 'Water', 'Kinley', 'Mineral Water', '1.5L', 'Single Unit'], ['Sufi Water', 'Water', 'Sufi', 'Mineral Water', '1.5L', 'Single Unit'], ['Gourmet Water', 'Water', 'Gourmet', 'Mineral Water', '1.5L', 'Single Unit'], ['Alhambra Water', 'Water', 'Alhambra', 'Mineral Water', '1.5L', 'Single Unit'],
+    ['Nestle Fruita Vitals', 'Juices', 'Nestle', 'Juice', '1L', 'Pack'], ['Slice', 'Juices', 'Slice', 'Juice', '200ml', 'Pack'], ['Maaza', 'Juices', 'Maaza', 'Juice', '200ml', 'Pack'], ['Dayfresh Juice', 'Juices', 'Dayfresh', 'Juice', '1L', 'Pack'], ['Nurpur Juice', 'Juices', 'Nurpur', 'Juice', '1L', 'Pack'], ['Shezan', 'Juices', 'Shezan', 'Juice', '1L', 'Pack'], ['Mitchells', 'Juices', 'Mitchells', 'Juice', '1L', 'Pack'],
+    ['LU', 'Biscuits', 'LU', 'Biscuits', 'Pack', 'Pack'], ['Sooper', 'Biscuits', 'Sooper', 'Biscuits', 'Pack', 'Pack'], ['Gala', 'Biscuits', 'Gala', 'Biscuits', 'Pack', 'Pack'], ['Rio', 'Biscuits', 'Rio', 'Biscuits', 'Pack', 'Pack'], ['Prince', 'Biscuits', 'Prince', 'Biscuits', 'Pack', 'Pack'], ['Candi', 'Biscuits', 'Candi', 'Biscuits', 'Pack', 'Pack'], ['Tiger', 'Biscuits', 'Tiger', 'Biscuits', 'Pack', 'Pack'], ['Click', 'Biscuits', 'Click', 'Biscuits', 'Pack', 'Pack'], ['Oreo', 'Biscuits', 'Oreo', 'Biscuits', 'Pack', 'Pack'], ['Britannia', 'Biscuits', 'Britannia', 'Biscuits', 'Pack', 'Pack'],
+    ['Lays', 'Snacks', 'Lays', 'Chips', 'Pack', 'Pack'], ['Kurkure', 'Snacks', 'Kurkure', 'Chips', 'Pack', 'Pack'], ['Cheetos', 'Snacks', 'Cheetos', 'Chips', 'Pack', 'Pack'], ['Kolson Snacks', 'Snacks', 'Kolson', 'Snacks', 'Pack', 'Pack'], ['Slanty', 'Snacks', 'Slanty', 'Snacks', 'Pack', 'Pack'],
+    ['Milk', 'Dairy', 'General', 'Milk', '1L', 'Pack'], ['Yogurt', 'Dairy', 'General', 'Yogurt', '500g', 'Pack'], ['Butter', 'Dairy', 'General', 'Butter', '200g', 'Pack'], ['Cream', 'Dairy', 'General', 'Cream', '200ml', 'Pack'], ['Cheese', 'Dairy', 'General', 'Cheese', 'Pack', 'Pack'],
+    ['Sugar', 'Grocery', 'General', 'Staple', '1kg', 'Pack'], ['Tea', 'Grocery', 'General', 'Tea', '190g', 'Pack'], ['Rice', 'Grocery', 'General', 'Staple', '1kg', 'Pack'], ['Flour', 'Grocery', 'General', 'Staple', '10kg', 'Bag'], ['Pulses', 'Grocery', 'General', 'Staple', '1kg', 'Pack'], ['Spices', 'Grocery', 'General', 'Spices', 'Pack', 'Pack'],
+    ['Candies', 'Confectionery', 'General', 'Candy', 'Pack', 'Pack'], ['Chocolates', 'Confectionery', 'General', 'Chocolate', 'Pack', 'Pack'], ['Toffees', 'Confectionery', 'General', 'Toffee', 'Pack', 'Pack'], ['Gum', 'Confectionery', 'General', 'Chewing Gum', 'Pack', 'Pack'],
+    ['Soap', 'Personal Care', 'General', 'Soap', 'Single', 'Single Unit'], ['Shampoo', 'Personal Care', 'General', 'Shampoo', 'Bottle', 'Bottle'], ['Toothpaste', 'Personal Care', 'General', 'Toothpaste', 'Tube', 'Single Unit'], ['Face Wash', 'Personal Care', 'General', 'Face Wash', 'Tube', 'Single Unit'],
+    ['Detergent', 'Household', 'General', 'Laundry', 'Pack', 'Pack'], ['Dish Wash', 'Household', 'General', 'Cleaning', 'Bottle', 'Bottle'], ['Tissue', 'Household', 'General', 'Tissue', 'Box', 'Box'], ['Cleaning Products', 'Household', 'General', 'Cleaning', 'Bottle', 'Bottle'],
   ],
   'General Store': [
-    ['Sugar 1kg', 'Grocery', 'General'], ['Rice 1kg', 'Grocery', 'General'], ['Cooking Oil 1L', 'Grocery', 'General'], ['Tea Pack', 'Grocery', 'General'],
-    ['Biscuit Pack', 'Grocery', 'General'], ['Cold Drink 1.5L', 'Beverages', 'General'], ['Soap', 'Household', 'General'], ['Battery Cell', 'General', 'Generic'],
-    ['Notebook', 'General', 'Generic'], ['Pen', 'General', 'Generic'], ['Tissue Box', 'Household', 'General'], ['Match Box', 'General', 'Generic'],
+    ['Coca Cola', 'Beverages', 'Coca Cola', 'Soft Drink', '500ml', 'Single Unit'], ['Pepsi', 'Beverages', 'Pepsi', 'Soft Drink', '500ml', 'Single Unit'], ['7UP', 'Beverages', '7UP', 'Soft Drink', '500ml', 'Single Unit'], ['Mountain Dew', 'Beverages', 'Mountain Dew', 'Soft Drink', '500ml', 'Single Unit'],
+    ['Sting', 'Beverages', 'Sting', 'Energy Drink', '250ml', 'Single Unit'], ['Sprite', 'Beverages', 'Sprite', 'Soft Drink', '500ml', 'Single Unit'], ['Fanta', 'Beverages', 'Fanta', 'Soft Drink', '500ml', 'Single Unit'], ['Mirinda', 'Beverages', 'Mirinda', 'Soft Drink', '500ml', 'Single Unit'],
+    ['Pakola', 'Beverages', 'Pakola', 'Soft Drink', '500ml', 'Single Unit'], ['Next Cola', 'Beverages', 'Next Cola', 'Soft Drink', '500ml', 'Single Unit'],
+    ['Nestle Pure Life', 'Water', 'Nestle', 'Mineral Water', '1.5L', 'Single Unit'], ['Aquafina', 'Water', 'Aquafina', 'Mineral Water', '1.5L', 'Single Unit'], ['Kinley', 'Water', 'Kinley', 'Mineral Water', '1.5L', 'Single Unit'], ['Sufi Water', 'Water', 'Sufi', 'Mineral Water', '1.5L', 'Single Unit'], ['Gourmet Water', 'Water', 'Gourmet', 'Mineral Water', '1.5L', 'Single Unit'], ['Alhambra Water', 'Water', 'Alhambra', 'Mineral Water', '1.5L', 'Single Unit'],
+    ['Nestle Fruita Vitals', 'Juices', 'Nestle', 'Juice', '1L', 'Pack'], ['Slice', 'Juices', 'Slice', 'Juice', '200ml', 'Pack'], ['Maaza', 'Juices', 'Maaza', 'Juice', '200ml', 'Pack'], ['Dayfresh Juice', 'Juices', 'Dayfresh', 'Juice', '1L', 'Pack'], ['Nurpur Juice', 'Juices', 'Nurpur', 'Juice', '1L', 'Pack'], ['Shezan', 'Juices', 'Shezan', 'Juice', '1L', 'Pack'], ['Mitchells', 'Juices', 'Mitchells', 'Juice', '1L', 'Pack'],
+    ['LU', 'Biscuits', 'LU', 'Biscuits', 'Pack', 'Pack'], ['Sooper', 'Biscuits', 'Sooper', 'Biscuits', 'Pack', 'Pack'], ['Gala', 'Biscuits', 'Gala', 'Biscuits', 'Pack', 'Pack'], ['Rio', 'Biscuits', 'Rio', 'Biscuits', 'Pack', 'Pack'], ['Prince', 'Biscuits', 'Prince', 'Biscuits', 'Pack', 'Pack'], ['Candi', 'Biscuits', 'Candi', 'Biscuits', 'Pack', 'Pack'], ['Tiger', 'Biscuits', 'Tiger', 'Biscuits', 'Pack', 'Pack'], ['Click', 'Biscuits', 'Click', 'Biscuits', 'Pack', 'Pack'], ['Oreo', 'Biscuits', 'Oreo', 'Biscuits', 'Pack', 'Pack'], ['Britannia', 'Biscuits', 'Britannia', 'Biscuits', 'Pack', 'Pack'],
+    ['Lays', 'Snacks', 'Lays', 'Chips', 'Pack', 'Pack'], ['Kurkure', 'Snacks', 'Kurkure', 'Chips', 'Pack', 'Pack'], ['Cheetos', 'Snacks', 'Cheetos', 'Chips', 'Pack', 'Pack'], ['Kolson Snacks', 'Snacks', 'Kolson', 'Snacks', 'Pack', 'Pack'], ['Slanty', 'Snacks', 'Slanty', 'Snacks', 'Pack', 'Pack'],
+    ['Milk', 'Dairy', 'General', 'Milk', '1L', 'Pack'], ['Yogurt', 'Dairy', 'General', 'Yogurt', '500g', 'Pack'], ['Butter', 'Dairy', 'General', 'Butter', '200g', 'Pack'], ['Cream', 'Dairy', 'General', 'Cream', '200ml', 'Pack'], ['Cheese', 'Dairy', 'General', 'Cheese', 'Pack', 'Pack'],
+    ['Sugar', 'Grocery', 'General', 'Staple', '1kg', 'Pack'], ['Tea', 'Grocery', 'General', 'Tea', '190g', 'Pack'], ['Rice', 'Grocery', 'General', 'Staple', '1kg', 'Pack'], ['Flour', 'Grocery', 'General', 'Staple', '10kg', 'Bag'], ['Pulses', 'Grocery', 'General', 'Staple', '1kg', 'Pack'], ['Spices', 'Grocery', 'General', 'Spices', 'Pack', 'Pack'],
+    ['Candies', 'Confectionery', 'General', 'Candy', 'Pack', 'Pack'], ['Chocolates', 'Confectionery', 'General', 'Chocolate', 'Pack', 'Pack'], ['Toffees', 'Confectionery', 'General', 'Toffee', 'Pack', 'Pack'], ['Gum', 'Confectionery', 'General', 'Chewing Gum', 'Pack', 'Pack'],
+    ['Soap', 'Personal Care', 'General', 'Soap', 'Single', 'Single Unit'], ['Shampoo', 'Personal Care', 'General', 'Shampoo', 'Bottle', 'Bottle'], ['Toothpaste', 'Personal Care', 'General', 'Toothpaste', 'Tube', 'Single Unit'], ['Face Wash', 'Personal Care', 'General', 'Face Wash', 'Tube', 'Single Unit'],
+    ['Detergent', 'Household', 'General', 'Laundry', 'Pack', 'Pack'], ['Dish Wash', 'Household', 'General', 'Cleaning', 'Bottle', 'Bottle'], ['Tissue', 'Household', 'General', 'Tissue', 'Box', 'Box'], ['Cleaning Products', 'Household', 'General', 'Cleaning', 'Bottle', 'Bottle'],
   ],
   'Electronics Store': [
     ['LED Bulb 12W', 'Electronics', 'Generic'], ['Extension Lead', 'Electronics', 'Generic'], ['HDMI Cable', 'Accessories', 'Generic'], ['Remote Control', 'Accessories', 'Generic'],
@@ -890,7 +940,8 @@ function CatalogModule({ rows, products, brand, refresh }) {
   const blank = () => config.defaultRecord({ brand });
 
   async function submit(record) {
-    const saved = await saveRecord('master_catalogs', { ...record, business_type: brand?.business_type || 'General Store' });
+    const productName = record.product_name || record.name;
+    const saved = await saveRecord('master_catalogs', { ...record, name: productName, product_name: productName, business_type: brand?.business_type || 'General Store' });
     runInBackground(() => saveRemoteRecord('master_catalogs', saved), 'Catalog synced in background');
     setEditing(null);
     await refresh();
@@ -915,13 +966,14 @@ function CatalogModule({ rows, products, brand, refresh }) {
 
   async function seedPresets() {
     const businessType = brand?.business_type || 'General Store';
-    const existing = new Set(rows.map((row) => `${String(row.business_type || '').toLowerCase()}|${String(row.name || '').toLowerCase()}`));
+    const existing = new Set(rows.map((row) => `${String(row.business_type || '').toLowerCase()}|${String(row.product_name || row.name || '').toLowerCase()}`));
     const source = CATALOG_PRESETS[businessType] || CATALOG_PRESETS['General Store'];
     let count = 0;
-    for (const [name, category, itemBrand] of source) {
-      const key = `${businessType.toLowerCase()}|${name.toLowerCase()}`;
+    for (const item of source) {
+      const record = catalogPresetRecord(item, businessType);
+      const key = `${businessType.toLowerCase()}|${record.product_name.toLowerCase()}`;
       if (existing.has(key)) continue;
-      await saveRecord('master_catalogs', { name, business_type: businessType, category, brand: itemBrand, type: category, unit: 'pcs', notes: 'Built-in starter catalog' });
+      await saveRecord('master_catalogs', record);
       count += 1;
     }
     await refresh();
@@ -929,19 +981,23 @@ function CatalogModule({ rows, products, brand, refresh }) {
   }
 
   async function addToInventory(row) {
-    const exists = products.some((product) => String(product.product_name || '').toLowerCase() === String(row.name || '').toLowerCase());
+    const productName = row.product_name || row.name;
+    const exists = products.some((product) => String(product.product_name || '').toLowerCase() === String(productName || '').toLowerCase());
     if (exists) return notify('This item already exists in inventory');
     const product = await saveRecord('products', calculatedProduct({
-      product_name: row.name,
+      product_name: productName,
       category: row.category || categoriesForBusiness(brand)[0],
       brand: row.brand || '',
-      unit: row.unit || 'pcs',
+      barcode: row.barcode || '',
+      pack_size: row.pack_size || '',
+      variant_type: row.unit || 'Single Unit',
+      unit: row.unit || 'Single Unit',
       package_quantity: 0,
       units_per_package: 1,
       loose_quantity: 0,
       quantity: 0,
-      purchase_price: 0,
-      sale_price: 0,
+      purchase_price: Number(row.default_cost || 0),
+      sale_price: Number(row.default_price || 0),
       low_stock_threshold: 3,
     }));
     runInBackground(() => saveRemoteRecord('products', product), 'Inventory synced in background');
@@ -1054,7 +1110,8 @@ function Inventory({ rows, brand, refresh }) {
   const filtered = useMemo(() => filterRows(inventoryRows(rows), query, RESOURCES.products.search), [rows, query]);
   const blank = {
     category: categoryOptions[0],
-    unit: 'pcs',
+    unit: 'Single Unit',
+    variant_type: 'Single Unit',
     package_quantity: 0,
     units_per_package: 1,
     loose_quantity: 0,
@@ -1096,7 +1153,7 @@ function Inventory({ rows, brand, refresh }) {
   }
 
   const edit = calculatedProduct(editing || blank);
-  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(calculatedProduct(row))}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Product Detail" row={viewing} columns={[...columns, 'barcode', 'sku', 'batch_number', 'expiry_date', 'imei_numbers', 'manufacturer', 'warranty', 'supplier_name']} onClose={() => setViewing(null)} />}{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={edit.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={edit.category || categoryOptions[0]} onChange={(event) => change('category', event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={edit.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label><label>SKU<input value={edit.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Barcode<input value={edit.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Unit<select value={edit.unit || 'pcs'} onChange={(event) => change('unit', event.target.value)}>{['pcs', 'box', 'pack', 'carton', 'strip', 'bottle', 'kg', 'gram', 'liter', 'meter'].map((item) => <option key={item}>{item}</option>)}</select></label><label>Boxes / Packs Qty<input type="number" min="0" value={edit.package_quantity || 0} onChange={(event) => change('package_quantity', event.target.value)} /></label><label>Pcs Per Box / Pack<input type="number" min="1" value={edit.units_per_package || 1} onChange={(event) => change('units_per_package', event.target.value)} /></label><label>Loose Pcs<input type="number" min="0" value={edit.loose_quantity || 0} onChange={(event) => change('loose_quantity', event.target.value)} /></label><label>Total Stock Pcs<input type="number" readOnly value={edit.quantity || 0} /></label><label>Cost Per Pc<input type="number" min="0" step="0.01" value={edit.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label><label>Cost Per Box / Pack<input type="number" readOnly value={edit.package_cost_price || 0} /></label><label>Total Cost<input type="number" readOnly value={edit.total_cost || 0} /></label><label>Sale Price Per Pc<input type="number" min="0" step="0.01" value={edit.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Low Stock Warning<input type="number" min="0" value={edit.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label><label>Batch Number<input value={edit.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label><label>Expiry Date<input type="date" value={edit.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label><label>IMEI Numbers<textarea rows="3" value={imeiListText(edit)} onChange={(event) => { change('imei_numbers', event.target.value); change('imei', event.target.value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)[0] || ''); }} /></label><label>Manufacturer<input value={edit.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label><label>Warranty<input value={edit.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label><label>Supplier<input value={edit.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div><div className="totals inventory-total"><span>Total Stock: <strong>{edit.quantity || 0} pcs</strong></span><span>Per Box Cost: <strong>{money(edit.package_cost_price)}</strong></span><span>Total Cost: <strong>{money(edit.total_cost)}</strong></span></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(calculatedProduct(row))}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Product Detail" row={viewing} columns={[...columns, 'barcode', 'sku', 'variant_type', 'pack_size', 'batch_number', 'expiry_date', 'imei_numbers', 'manufacturer', 'warranty', 'supplier_name']} onClose={() => setViewing(null)} />}{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={edit.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={edit.category || categoryOptions[0]} onChange={(event) => change('category', event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={edit.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label><label>SKU<input value={edit.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Barcode<input value={edit.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Unit<select value={edit.unit || 'Single Unit'} onChange={(event) => change('unit', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Variant Type<select value={edit.variant_type || edit.unit || 'Single Unit'} onChange={(event) => change('variant_type', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Pack Size<input value={edit.pack_size || ''} onChange={(event) => change('pack_size', event.target.value)} /></label><label>Boxes / Packs Qty<input type="number" min="0" value={edit.package_quantity || 0} onChange={(event) => change('package_quantity', event.target.value)} /></label><label>Pcs Per Box / Pack<input type="number" min="1" value={edit.units_per_package || 1} onChange={(event) => change('units_per_package', event.target.value)} /></label><label>Loose Pcs<input type="number" min="0" value={edit.loose_quantity || 0} onChange={(event) => change('loose_quantity', event.target.value)} /></label><label>Total Stock Pcs<input type="number" readOnly value={edit.quantity || 0} /></label><label>Cost Per Pc<input type="number" min="0" step="0.01" value={edit.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label><label>Cost Per Box / Pack<input type="number" readOnly value={edit.package_cost_price || 0} /></label><label>Total Cost<input type="number" readOnly value={edit.total_cost || 0} /></label><label>Sale Price Per Pc<input type="number" min="0" step="0.01" value={edit.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Low Stock Warning<input type="number" min="0" value={edit.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label><label>Batch Number<input value={edit.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label><label>Expiry Date<input type="date" value={edit.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label><label>IMEI Numbers<textarea rows="3" value={imeiListText(edit)} onChange={(event) => { change('imei_numbers', event.target.value); change('imei', event.target.value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)[0] || ''); }} /></label><label>Manufacturer<input value={edit.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label><label>Warranty<input value={edit.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label><label>Supplier<input value={edit.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div><div className="totals inventory-total"><span>Total Stock: <strong>{edit.quantity || 0} pcs</strong></span><span>Per Box Cost: <strong>{money(edit.package_cost_price)}</strong></span><span>Total Cost: <strong>{money(edit.total_cost)}</strong></span></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function calculatedProduct(record) {
@@ -1596,7 +1653,7 @@ function formatReportRows(type, rows = []) {
 
 function reportTypesForBusiness(brand) {
   const type = brand?.business_type || 'General Store';
-  const retail = ['daily_sales', 'weekly_sales', 'monthly_sales', 'yearly_sales', 'product_sales', 'profit', 'inventory', 'customers', 'expenses', 'suppliers', 'purchases', 'customer_ledger', 'supplier_ledger', 'credit_recovery', 'mobile_wallets'];
+  const retail = ['daily_sales', 'weekly_sales', 'monthly_sales', 'yearly_sales', 'product_sales', 'top_products', 'profit', 'inventory', 'low_stock', 'near_expiry', 'expired_products', 'customers', 'expenses', 'suppliers', 'purchases', 'customer_ledger', 'supplier_ledger', 'credit_recovery', 'mobile_wallets'];
   const repair = ['repairs'];
   const pharmacy = ['medicines', 'low_stock_medicines', 'near_expiry_medicines', 'expired_medicines', 'manufacturer_reports', 'category_reports'];
   const hospital = ['patients', 'daily_patients', 'monthly_patients', 'doctor_performance', 'hospital_revenue', 'lab_report_summary', 'radiology_report_summary', 'pharmacy_prescriptions', 'follow_up_report', 'pending_bills', 'top_medicines', 'assistants', 'expenses'];
@@ -2163,7 +2220,9 @@ function catalogRowsForBusiness(rows, brand) {
   if (type === 'General Store') allowed.add('Grocery Store');
   if (type === 'Grocery Store') allowed.add('General Store');
   if (type === 'Hospital') allowed.add('Pharmacy');
-  return rows.filter((row) => allowed.has(row.business_type || 'All'));
+  return rows
+    .filter((row) => allowed.has(row.business_type || 'All'))
+    .map((row) => ({ ...row, product_name: row.product_name || row.name, name: row.name || row.product_name }));
 }
 
 function backupStoresForBusiness(role, businessType = 'General Store') {
@@ -2200,9 +2259,9 @@ function backupStoresForBusiness(role, businessType = 'General Store') {
 
 function downloadCatalogTemplate() {
   exportCsv('master-catalog-template.csv', [
-    { name: 'Paracetamol 500mg', business_type: 'Pharmacy', category: 'Medicine', brand: 'Generic', type: 'Tablet', unit: 'pcs', notes: 'Sample row' },
-    { name: 'iPhone 15 Pro Max', business_type: 'Mobile Shop', category: 'Mobile Phones', brand: 'Apple', type: 'Model', unit: 'pcs', notes: 'Sample row' },
-    { name: 'Sugar 1kg', business_type: 'Grocery Store', category: 'Grocery', brand: 'General', type: 'Pack', unit: 'kg', notes: 'Sample row' },
+    { product_name: 'Paracetamol 500mg', name: 'Paracetamol 500mg', business_type: 'Pharmacy', category: 'Medicine', subcategory: 'Tablet', brand: 'Generic', barcode: '', pack_size: '10 tablets', unit: 'Pack', default_cost: 0, default_price: 0, notes: 'Sample row' },
+    { product_name: 'iPhone 15 Pro Max', name: 'iPhone 15 Pro Max', business_type: 'Mobile Shop', category: 'Mobile Phones', subcategory: 'Model', brand: 'Apple', barcode: '', pack_size: 'Single', unit: 'Single Unit', default_cost: 0, default_price: 0, notes: 'Sample row' },
+    { product_name: 'Coca Cola', name: 'Coca Cola', business_type: 'General Store', category: 'Beverages', subcategory: 'Soft Drink', brand: 'Coca Cola', barcode: '', pack_size: '500ml', unit: 'Single Unit', default_cost: 0, default_price: 0, notes: 'Sample row' },
   ]);
 }
 
