@@ -84,7 +84,7 @@ const TENANT_SCOPED_STORES = new Set([
 const BUSINESS_TYPED_STORES = new Set(['products', 'categories', 'brands', 'master_catalogs', 'medicines']);
 
 export async function database() {
-  return openDB('dsh-production-db', 8, {
+  return openDB('dsh-production-db', 9, {
     upgrade(db) {
       for (const store of STORE_NAMES) {
         if (!db.objectStoreNames.contains(store)) {
