@@ -13,6 +13,9 @@ export const STORE_NAMES = [
   'master_catalogs', 'medicines', 'imei_registry', 'imei_movements',
   'warranty_claims', 'sale_returns', 'sale_return_items', 'purchase_returns',
   'purchase_return_items', 'licenses', 'audit_logs', 'sync_queue',
+  'trader_companies', 'trader_brands', 'trader_territories', 'trader_routes',
+  'trader_salesmen', 'trader_retailers', 'trader_delivery_challans',
+  'trader_recoveries', 'trader_salesman_ledgers', 'trader_distributor_ledgers',
 ];
 
 const MONEY_FIELDS = new Set([
@@ -58,6 +61,9 @@ const BUSINESS_SYNC_ENTITIES = new Set([
   'master_catalogs', 'medicines', 'imei_registry', 'imei_movements',
   'warranty_claims', 'sale_returns', 'sale_return_items', 'purchase_returns',
   'purchase_return_items', 'licenses',
+  'trader_companies', 'trader_brands', 'trader_territories', 'trader_routes',
+  'trader_salesmen', 'trader_retailers', 'trader_delivery_challans',
+  'trader_recoveries', 'trader_salesman_ledgers', 'trader_distributor_ledgers',
 ]);
 
 const TENANT_SCOPED_STORES = new Set([
@@ -70,6 +76,9 @@ const TENANT_SCOPED_STORES = new Set([
   'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'imei_registry',
   'imei_movements', 'warranty_claims', 'sale_returns', 'sale_return_items',
   'purchase_returns', 'purchase_return_items', 'sync_queue',
+  'trader_companies', 'trader_brands', 'trader_territories', 'trader_routes',
+  'trader_salesmen', 'trader_retailers', 'trader_delivery_challans',
+  'trader_recoveries', 'trader_salesman_ledgers', 'trader_distributor_ledgers',
 ]);
 
 const BUSINESS_TYPED_STORES = new Set(['products', 'categories', 'brands', 'master_catalogs', 'medicines']);
@@ -228,6 +237,16 @@ function apiResourceName(resource) {
     sale_return_items: 'sale-return-items',
     purchase_returns: 'purchase-returns',
     purchase_return_items: 'purchase-return-items',
+    trader_companies: 'trader-companies',
+    trader_brands: 'trader-brands',
+    trader_territories: 'trader-territories',
+    trader_routes: 'trader-routes',
+    trader_salesmen: 'trader-salesmen',
+    trader_retailers: 'trader-retailers',
+    trader_delivery_challans: 'trader-delivery-challans',
+    trader_recoveries: 'trader-recoveries',
+    trader_salesman_ledgers: 'trader-salesman-ledgers',
+    trader_distributor_ledgers: 'trader-distributor-ledgers',
     medicine_categories: 'medicine-categories',
     medicine_manufacturers: 'medicine-manufacturers',
     audit_logs: 'audit-logs',
@@ -260,6 +279,16 @@ async function markRecordSynced(resource, uuid) {
     'sale-return-items': 'sale_return_items',
     'purchase-returns': 'purchase_returns',
     'purchase-return-items': 'purchase_return_items',
+    'trader-companies': 'trader_companies',
+    'trader-brands': 'trader_brands',
+    'trader-territories': 'trader_territories',
+    'trader-routes': 'trader_routes',
+    'trader-salesmen': 'trader_salesmen',
+    'trader-retailers': 'trader_retailers',
+    'trader-delivery-challans': 'trader_delivery_challans',
+    'trader-recoveries': 'trader_recoveries',
+    'trader-salesman-ledgers': 'trader_salesman_ledgers',
+    'trader-distributor-ledgers': 'trader_distributor_ledgers',
     'medicine-categories': 'medicine_categories',
     'medicine-manufacturers': 'medicine_manufacturers',
     'audit-logs': 'audit_logs',
@@ -425,13 +454,13 @@ async function deleteLicenseUsersLocally(db, licenseUuid, mode = 'soft') {
   }
 }
 
-export async function createSale({ customer_uuid, payment_type, discount, tax, paid, due_date, cart }) {
+export async function createSale({ customer_uuid, payment_type, discount, tax, paid, due_date, cart, ...extra }) {
   if (!cart?.length) throw new Error('Cart is empty.');
   const retailPrefix = retailBackendPrefix();
   if (retailPrefix) {
     try {
       const payload = await retailEnterpriseRequest(retailPrefix, 'sales', {
-        customer_uuid, payment_type, discount, tax, paid, due_date, cart,
+        customer_uuid, payment_type, discount, tax, paid, due_date, cart, ...extra,
       });
       await cacheMobileShopWorkflow(payload);
       return payload.sale;
@@ -806,7 +835,8 @@ async function cacheHospitalWorkflow(payload) {
 function businessTypeKey(type) {
   const normalized = String(type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (['mobile_shop', 'mobile'].includes(normalized)) return 'mobile_shop';
-  if (['general_store', 'grocery_store', 'grocery', 'shopping_mall', 'traders', 'retail_shop'].includes(normalized)) return 'general_store';
+  if (normalized === 'traders') return 'traders';
+  if (['general_store', 'grocery_store', 'grocery', 'shopping_mall', 'retail_shop'].includes(normalized)) return 'general_store';
   return normalized;
 }
 
@@ -815,6 +845,7 @@ function retailBackendPrefix() {
   if (!navigator.onLine || !localStorage.getItem('dsh_token')) return '';
   const key = businessTypeKey(scope.business_type);
   if (key === 'mobile_shop') return 'mobile-shop';
+  if (key === 'traders') return 'traders';
   if (key === 'general_store') return 'general-store';
   return '';
 }
@@ -861,6 +892,13 @@ async function cacheMobileShopWorkflow(payload) {
     ['sale_return_items', payload.sale_return_items || []],
     ['purchase_returns', [payload.purchase_return].filter(Boolean)],
     ['purchase_return_items', payload.purchase_return_items || []],
+    ['inventory_transactions', payload.inventory_transactions || []],
+    ['cashbook', payload.cashbook || []],
+    ['trader_retailers', payload.retailers || []],
+    ['trader_delivery_challans', [payload.challan].filter(Boolean)],
+    ['trader_recoveries', [payload.recovery].filter(Boolean)],
+    ['trader_salesman_ledgers', payload.salesman_ledgers || []],
+    ['trader_distributor_ledgers', payload.distributor_ledgers || []],
   ];
   for (const [store, rows] of pairs) {
     for (const row of rows) {
@@ -938,6 +976,27 @@ export async function createPurchase({ supplier_uuid, invoice_number, cart, paid
   }
 
   return purchase;
+}
+
+export async function createTraderDeliveryChallan(record) {
+  if (retailBackendPrefix() === 'traders') {
+    const payload = await retailEnterpriseRequest('traders', 'delivery-challans', record);
+    await cacheMobileShopWorkflow(payload);
+    return payload.challan;
+  }
+  return saveRecord('trader_delivery_challans', {
+    ...record,
+    challan_number: record.challan_number || await nextNumber('trader_delivery_challans', 'CH'),
+  });
+}
+
+export async function createTraderRecovery(record) {
+  if (retailBackendPrefix() === 'traders') {
+    const payload = await retailEnterpriseRequest('traders', 'recoveries', record);
+    await cacheMobileShopWorkflow(payload);
+    return payload.recovery;
+  }
+  return saveRecord('trader_recoveries', record);
 }
 
 export async function searchMobileShopImei(query = '', filters = {}) {
@@ -1207,11 +1266,13 @@ export async function saveBrandSettings(settings) {
 }
 
 export async function reportData(type) {
-  const [sales, saleItems, products, expenses, customers, suppliers, repairs, receipts, purchases, wallets, patients, assistants, medicines, prescriptions, labReports, radiologyReports, hospitalBills] = await Promise.all([
+  const [sales, saleItems, products, expenses, customers, suppliers, repairs, receipts, purchases, wallets, patients, assistants, medicines, prescriptions, labReports, radiologyReports, hospitalBills, retailers, salesmen, routes, territories, traderRecoveries, salesmanLedgers, distributorLedgers] = await Promise.all([
     listRecords('sales'), listRecords('sale_items'), listRecords('products'), listRecords('expenses'),
     listRecords('customers'), listRecords('suppliers'), listRecords('repairs'), listRecords('manual_repair_receipts'), listRecords('purchases'),
     listRecords('mobile_wallet_transactions'), listRecords('patients'), listRecords('assistants'), listRecords('medicines'),
     listRecords('hospital_prescriptions'), listRecords('lab_reports'), listRecords('radiology_reports'), listRecords('hospital_bills'),
+    listRecords('trader_retailers'), listRecords('trader_salesmen'), listRecords('trader_routes'), listRecords('trader_territories'),
+    listRecords('trader_recoveries'), listRecords('trader_salesman_ledgers'), listRecords('trader_distributor_ledgers'),
   ]);
   const today = new Date().toISOString().slice(0, 10);
   const nearExpiryLimit = Date.now() + 90 * 86400000;
@@ -1244,6 +1305,20 @@ export async function reportData(type) {
     repairs: [...repairs, ...receipts],
     credit_recovery: sales.filter((sale) => Number(sale.balance || 0) > 0),
     mobile_wallets: wallets,
+    route_sales: groupMoney(sales, 'route_name', 'total'),
+    route_recovery: groupMoney(traderRecoveries, 'route_name', 'amount'),
+    route_profit: groupMoney(sales, 'route_name', 'profit'),
+    company_wise_sales: groupMoney(saleItems, 'company_name', 'total'),
+    brand_wise_sales: groupMoney(saleItems, 'brand', 'total'),
+    product_wise_sales: topProducts,
+    outstanding_customers: retailers.filter((row) => Number(row.balance || 0) > 0),
+    recovery_history: traderRecoveries,
+    aging_report: retailers.filter((row) => Number(row.balance || 0) > 0).map((row) => ({ ...row, aging_days: daysSince(row.updated_at || row.created_at) })),
+    salesman_ledger: salesmanLedgers,
+    distributor_ledger: distributorLedgers,
+    traders_dashboard: traderDashboardRows(sales, traderRecoveries, retailers, salesmen, routes, saleItems),
+    trader_routes: routes,
+    trader_territories: territories,
     patients,
     assistants,
     daily_patients: patients.filter((patient) => sameDay(patient.visit_date || patient.created_at)),
@@ -1744,6 +1819,37 @@ function topCustomers(customers, sales) {
     }))
     .sort((a, b) => b.total_spent - a.total_spent)
     .slice(0, 5);
+}
+
+function groupMoney(rows, keyField, moneyField) {
+  return Object.values((rows || []).reduce((acc, row) => {
+    const key = row[keyField] || 'Unassigned';
+    acc[key] ||= { uuid: key, name: key, total: 0, count: 0 };
+    acc[key].total += Number(row[moneyField] || row.total || 0);
+    acc[key].count += 1;
+    return acc;
+  }, {})).sort((a, b) => Number(b.total || 0) - Number(a.total || 0));
+}
+
+function daysSince(value) {
+  const time = value ? new Date(value).getTime() : Date.now();
+  return Math.max(0, Math.floor((Date.now() - time) / 86400000));
+}
+
+function traderDashboardRows(sales, recoveries, retailers, salesmen, routes, saleItems) {
+  const month = new Date().toISOString().slice(0, 7);
+  return [{
+    uuid: 'traders-dashboard',
+    today_sales: (sales || []).filter((sale) => sameDay(sale.sold_at)).reduce((total, sale) => total + Number(sale.total || 0), 0),
+    today_recovery: (recoveries || []).filter((row) => sameDay(row.date || row.recovered_at || row.created_at)).reduce((total, row) => total + Number(row.amount || 0), 0),
+    outstanding_receivables: (retailers || []).reduce((total, row) => total + Number(row.balance || 0), 0),
+    top_salesman: groupMoney(sales, 'salesman_name', 'total')[0]?.name || 'No Data Available',
+    top_route: groupMoney(sales, 'route_name', 'total')[0]?.name || 'No Data Available',
+    top_brand: groupMoney(saleItems, 'brand', 'total')[0]?.name || 'No Data Available',
+    monthly_profit: (sales || []).filter((sale) => String(sale.sold_at || '').startsWith(month)).reduce((total, sale) => total + Number(sale.profit || 0), 0),
+    salesmen: (salesmen || []).length,
+    routes: (routes || []).length,
+  }];
 }
 
 function printDocument(title, html) {

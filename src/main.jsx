@@ -19,7 +19,7 @@ import {
   whatsAppShare, createManualRepairReceipt, saveHospitalPatientWorkflow, syncHospitalPatientWorkflow, transitionHospitalPatientStatus,
   normalizePakistanPhone,
   completeHospitalPrescription, completeHospitalLabReport, completeHospitalRadiologyReport, reviewHospitalReport,
-  recalculateHospitalBill, saveHospitalBillPayment,
+  recalculateHospitalBill, saveHospitalBillPayment, createTraderDeliveryChallan, createTraderRecovery,
 } from './lib/db.js';
 import './styles/app.css';
 
@@ -35,6 +35,16 @@ const MODULES = [
   { id: 'repairReceipts', label: 'Repair Receipts', icon: Printer },
   { id: 'warrantyClaims', label: 'Warranty Claims', icon: KeyRound },
   { id: 'returns', label: 'Returns', icon: Download },
+  { id: 'traderCompanies', label: 'Companies', icon: Boxes },
+  { id: 'traderBrands', label: 'Brands', icon: Boxes },
+  { id: 'traderTerritories', label: 'Territories', icon: FileText },
+  { id: 'traderRoutes', label: 'Routes', icon: FileText },
+  { id: 'traderSalesmen', label: 'Salesmen', icon: Users },
+  { id: 'traderRetailers', label: 'Retailers', icon: Users },
+  { id: 'traderChallans', label: 'Delivery Challan', icon: Upload },
+  { id: 'traderRecoveries', label: 'Recovery', icon: WalletCards },
+  { id: 'traderSalesmanLedger', label: 'Salesman Ledger', icon: FileText },
+  { id: 'traderDistributorLedger', label: 'Distributor Ledger', icon: FileText },
   { id: 'purchases', label: 'Purchases', icon: Upload },
   { id: 'suppliers', label: 'Suppliers', icon: Smartphone },
   { id: 'expenses', label: 'Expenses', icon: Calculator },
@@ -56,7 +66,7 @@ const MODULES = [
   { id: 'settings', label: 'Admin', icon: Settings },
 ];
 
-const SHOP_TYPES = ['Mobile Shop', 'Hospital', 'Grocery Store', 'Pharmacy', 'General Store', 'Shopping Mall', 'Electronics Store', 'Clothing Store', 'Hardware Store'];
+const SHOP_TYPES = ['Mobile Shop', 'Hospital', 'Grocery Store', 'Pharmacy', 'General Store', 'Traders', 'Shopping Mall', 'Electronics Store', 'Clothing Store', 'Hardware Store'];
 const REPAIR_SHOP_TYPES = new Set(['Mobile Shop', 'Electronics Store']);
 const HOSPITAL_MODULES = new Set(['patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling']);
 const SUPER_ADMIN_MODULES = new Set(['licenses', 'settings']);
@@ -64,16 +74,18 @@ const MOBILE_SHOP_MODULES = new Set(['dashboard', 'pos', 'sales', 'products', 'c
 const HOSPITAL_BUSINESS_MODULES = new Set(['dashboard', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'medicines', 'backup', 'users']);
 const GENERIC_SHOP_MODULES = new Set(['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'purchases', 'suppliers', 'expenses', 'reports', 'catalog', 'backup', 'users']);
 const PHARMACY_MODULES = new Set(['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'purchases', 'suppliers', 'expenses', 'reports', 'catalog', 'medicines', 'backup', 'users']);
+const TRADERS_MODULES = new Set(['dashboard', 'pos', 'sales', 'products', 'traderCompanies', 'traderBrands', 'traderTerritories', 'traderRoutes', 'traderSalesmen', 'traderRetailers', 'traderChallans', 'traderRecoveries', 'traderSalesmanLedger', 'traderDistributorLedger', 'purchases', 'suppliers', 'expenses', 'reports', 'catalog', 'backup', 'users']);
 const GENERAL_STORE_CATEGORIES = ['Beverages', 'Water', 'Juices', 'Biscuits', 'Snacks', 'Dairy', 'Grocery', 'Confectionery', 'Personal Care', 'Household'];
+const TRADERS_CATEGORIES = ['Beverages', 'Water', 'Juices', 'Biscuits', 'Snacks', 'Dairy', 'Grocery', 'Confectionery', 'Personal Care', 'Household', 'Company Stock'];
 const RETAIL_UNITS = ['Single Unit', 'Half Carton', 'Carton', 'Box', 'Pack', 'Dozen', 'Bag', 'Bottle', 'pcs', 'kg', 'gram', 'liter', 'meter'];
 
 const ROLE_MODULES = {
   'Super Admin': ['dashboard', 'licenses', 'users', 'settings', 'backup', 'reports', 'notifications'],
-  Admin: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'warrantyClaims', 'returns', 'purchases', 'suppliers', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'medicines', 'backup', 'users', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling'],
+  Admin: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'warrantyClaims', 'returns', 'traderCompanies', 'traderBrands', 'traderTerritories', 'traderRoutes', 'traderSalesmen', 'traderRetailers', 'traderChallans', 'traderRecoveries', 'traderSalesmanLedger', 'traderDistributorLedger', 'purchases', 'suppliers', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'medicines', 'backup', 'users', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling'],
   'Hospital Owner': ['dashboard', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling', 'expenses', 'notifications', 'reports', 'catalog', 'medicines', 'backup', 'users'],
   Receptionist: ['dashboard', 'patients', 'hospitalBilling', 'notifications'],
-  Manager: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'warrantyClaims', 'returns', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports', 'catalog', 'medicines', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling'],
-  Cashier: ['dashboard', 'pos', 'sales', 'customers', 'credit', 'mobileWallets', 'repairReceipts', 'warrantyClaims', 'returns', 'notifications'],
+  Manager: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'mobileWallets', 'repairs', 'repairReceipts', 'warrantyClaims', 'returns', 'traderCompanies', 'traderBrands', 'traderTerritories', 'traderRoutes', 'traderSalesmen', 'traderRetailers', 'traderChallans', 'traderRecoveries', 'traderSalesmanLedger', 'traderDistributorLedger', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports', 'catalog', 'medicines', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling'],
+  Cashier: ['dashboard', 'pos', 'sales', 'customers', 'credit', 'mobileWallets', 'traderRetailers', 'traderRecoveries', 'repairReceipts', 'warrantyClaims', 'returns', 'notifications'],
   Technician: ['dashboard', 'customers', 'repairs', 'repairReceipts', 'warrantyClaims', 'notifications'],
   Doctor: ['dashboard', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'expenses', 'notifications', 'reports', 'catalog', 'medicines', 'backup'],
   Compounder: ['dashboard', 'patients', 'hospitalTasks', 'hospitalPharmacy', 'notifications', 'catalog', 'medicines'],
@@ -101,6 +113,9 @@ function modulesForBusiness(modules, brand, role) {
   if (key === 'pharmacy') {
     return modules.filter((item) => PHARMACY_MODULES.has(item.id));
   }
+  if (key === 'traders') {
+    return modules.filter((item) => TRADERS_MODULES.has(item.id));
+  }
   let scoped = modules.filter((item) => !HOSPITAL_MODULES.has(item.id) && !SUPER_ADMIN_MODULES.has(item.id));
   scoped = scoped.filter((item) => GENERIC_SHOP_MODULES.has(item.id) || (REPAIR_SHOP_TYPES.has(brand?.business_type) && ['repairs', 'repairReceipts'].includes(item.id)));
   return scoped;
@@ -111,7 +126,8 @@ function businessTypeKey(type) {
   if (['mobile_shop', 'mobile'].includes(normalized)) return 'mobile_shop';
   if (normalized === 'hospital') return 'hospital';
   if (normalized === 'pharmacy') return 'pharmacy';
-  if (['general_store', 'grocery_store', 'grocery', 'shopping_mall', 'traders', 'retail_shop'].includes(normalized)) return 'general_store';
+  if (normalized === 'traders') return 'traders';
+  if (['general_store', 'grocery_store', 'grocery', 'shopping_mall', 'retail_shop'].includes(normalized)) return 'general_store';
   return 'generic_shop';
 }
 
@@ -123,6 +139,7 @@ function categoriesForBusiness(brand) {
     'Pharmacy': ['Medicine', 'Healthcare', 'Personal Care', 'Baby Care'],
     'Grocery Store': GENERAL_STORE_CATEGORIES,
     'General Store': GENERAL_STORE_CATEGORIES,
+    Traders: TRADERS_CATEGORIES,
     'Shopping Mall': [...GENERAL_STORE_CATEGORIES, 'Electronics', 'Clothing'],
     'Clothing Store': ['Clothing', 'Footwear', 'Accessories'],
     'Hardware Store': ['Hardware', 'Tools', 'Electrical', 'Plumbing'],
@@ -168,7 +185,7 @@ const RESOURCES = {
     columns: ['product_name', 'category', 'brand', 'imei_numbers', 'unit', 'package_quantity', 'units_per_package', 'quantity', 'purchase_price', 'package_cost_price', 'total_cost', 'sale_price', 'low_stock_threshold', 'status'],
     rowMap: inventoryRows,
     fields: [
-      ['product_name', 'Product Name', 'text', true], ['category', 'Category', 'select', true, ['General', ...GENERAL_STORE_CATEGORIES, 'Pharmacy', 'Electronics', 'Clothing', 'Hardware', 'Accessories', 'Spare Parts']], ['brand', 'Brand'], ['model', 'Model'],
+      ['product_name', 'Product Name', 'text', true], ['category', 'Category', 'select', true, ['General', ...TRADERS_CATEGORIES, 'Pharmacy', 'Electronics', 'Clothing', 'Hardware', 'Accessories', 'Spare Parts']], ['company_name', 'Company Name'], ['company_uuid', 'Company UUID'], ['brand', 'Brand'], ['model', 'Model'],
       ['sku', 'SKU'], ['barcode', 'Barcode'], ['unit', 'Unit', 'select', true, RETAIL_UNITS], ['variant_type', 'Variant Type', 'select', false, RETAIL_UNITS], ['pack_size', 'Pack Size'], ['batch_number', 'Batch Number'],
       ['expiry_date', 'Expiry Date', 'date'], ['imei_numbers', 'IMEI Numbers'], ['purchase_price', 'Purchase Price', 'number'], ['sale_price', 'Sale Price', 'number'],
       ['quantity', 'Quantity', 'number'], ['low_stock_threshold', 'Low Stock Warning', 'number'], ['manufacturer', 'Manufacturer'], ['warranty', 'Warranty'], ['supplier_name', 'Supplier'],
@@ -203,6 +220,83 @@ const RESOURCES = {
     columns: ['provider', 'type', 'customer_name', 'phone', 'amount', 'fee', 'net_amount', 'reference_number', 'status', 'transacted_at'],
     fields: [['provider', 'Provider', 'select', true, ['EasyPaisa', 'JazzCash']], ['type', 'Type', 'select', true, ['Cash In', 'Cash Out']], ['customer_name', 'Customer Name'], ['phone', 'Phone'], ['amount', 'Amount', 'number', true], ['fee', 'Fee / Charges', 'number'], ['reference_number', 'Transaction ID'], ['status', 'Status', 'select', true, ['Completed', 'Pending', 'Failed']], ['transacted_at', 'Date', 'date'], ['notes', 'Notes']],
     customSave: addMobileWalletTransaction,
+  },
+  trader_companies: {
+    title: 'Companies',
+    store: 'trader_companies',
+    search: ['company_name', 'contact_person', 'phone', 'email', 'status'],
+    columns: ['company_name', 'contact_person', 'phone', 'email', 'status'],
+    fields: [['company_name', 'Company Name', 'text', true], ['contact_person', 'Contact Person'], ['phone', 'Phone'], ['email', 'Email'], ['address', 'Address'], ['status', 'Status', 'select', true, ['Active', 'Inactive']]],
+    defaultRecord: () => ({ status: 'Active' }),
+  },
+  trader_brands: {
+    title: 'Brands',
+    store: 'trader_brands',
+    search: ['brand_name', 'company_name', 'description'],
+    columns: ['brand_name', 'company_name', 'description'],
+    fields: [['brand_name', 'Brand Name', 'text', true], ['company_uuid', 'Company UUID'], ['company_name', 'Company Name'], ['description', 'Description']],
+  },
+  trader_territories: {
+    title: 'Territories',
+    store: 'trader_territories',
+    search: ['territory_name', 'city', 'area'],
+    columns: ['territory_name', 'city', 'area', 'notes'],
+    fields: [['territory_name', 'Territory Name', 'text', true], ['city', 'City'], ['area', 'Area'], ['notes', 'Notes']],
+  },
+  trader_routes: {
+    title: 'Routes',
+    store: 'trader_routes',
+    search: ['route_name', 'route_code', 'territory_name'],
+    columns: ['route_name', 'route_code', 'territory_name'],
+    fields: [['route_name', 'Route Name', 'text', true], ['route_code', 'Route Code'], ['territory_uuid', 'Territory UUID'], ['territory_name', 'Territory Name']],
+  },
+  trader_salesmen: {
+    title: 'Salesmen',
+    store: 'trader_salesmen',
+    search: ['name', 'phone', 'territory_name', 'route_name', 'status'],
+    columns: ['name', 'phone', 'territory_name', 'route_name', 'commission_type', 'commission_value', 'status'],
+    fields: [['name', 'Salesman Name', 'text', true], ['phone', 'Phone'], ['territory_uuid', 'Territory UUID'], ['territory_name', 'Territory Name'], ['route_uuid', 'Route UUID'], ['route_name', 'Route Name'], ['commission_type', 'Commission Type', 'select', true, ['Percentage', 'Fixed']], ['commission_value', 'Commission Value', 'number'], ['status', 'Status', 'select', true, ['Active', 'Inactive']]],
+    defaultRecord: () => ({ commission_type: 'Percentage', commission_value: 0, status: 'Active' }),
+  },
+  trader_retailers: {
+    title: 'Retailers / Customers',
+    store: 'trader_retailers',
+    search: ['shop_name', 'owner_name', 'phone', 'territory_name', 'route_name'],
+    columns: ['shop_name', 'owner_name', 'phone', 'territory_name', 'route_name', 'credit_limit', 'balance'],
+    fields: [['shop_name', 'Shop Name', 'text', true], ['owner_name', 'Owner Name'], ['phone', 'Phone'], ['address', 'Address'], ['territory_uuid', 'Territory UUID'], ['territory_name', 'Territory Name'], ['route_uuid', 'Route UUID'], ['route_name', 'Route Name'], ['credit_limit', 'Credit Limit', 'number'], ['balance', 'Balance', 'number']],
+    defaultRecord: () => ({ credit_limit: 0, balance: 0 }),
+  },
+  trader_delivery_challans: {
+    title: 'Delivery Challan',
+    store: 'trader_delivery_challans',
+    search: ['challan_number', 'retailer_name', 'salesman_name', 'vehicle_number', 'status'],
+    columns: ['challan_number', 'retailer_name', 'salesman_name', 'vehicle_number', 'date', 'status'],
+    fields: [['challan_number', 'Challan Number'], ['retailer_uuid', 'Retailer UUID'], ['retailer_name', 'Retailer Name'], ['salesman_uuid', 'Salesman UUID'], ['salesman_name', 'Salesman Name'], ['vehicle_number', 'Vehicle Number'], ['date', 'Date', 'date'], ['status', 'Status', 'select', true, ['Draft', 'Loaded', 'Delivered', 'Returned']]],
+    defaultRecord: () => ({ date: new Date().toISOString().slice(0, 10), status: 'Draft' }),
+    customSave: createTraderDeliveryChallan,
+  },
+  trader_recoveries: {
+    title: 'Recovery',
+    store: 'trader_recoveries',
+    search: ['retailer_name', 'salesman_name', 'payment_method', 'notes'],
+    columns: ['retailer_name', 'salesman_name', 'amount', 'payment_method', 'date', 'notes'],
+    fields: [['retailer_uuid', 'Retailer UUID', 'text', true], ['retailer_name', 'Retailer Name'], ['salesman_uuid', 'Salesman UUID'], ['salesman_name', 'Salesman Name'], ['amount', 'Amount', 'number', true], ['payment_method', 'Payment Method', 'select', true, ['Cash', 'Bank', 'EasyPaisa', 'JazzCash', 'Cheque']], ['date', 'Date', 'date'], ['notes', 'Notes']],
+    defaultRecord: () => ({ date: new Date().toISOString().slice(0, 10), payment_method: 'Cash' }),
+    customSave: createTraderRecovery,
+  },
+  trader_salesman_ledgers: {
+    title: 'Salesman Ledger',
+    store: 'trader_salesman_ledgers',
+    search: ['salesman_name', 'type', 'reference'],
+    columns: ['salesman_name', 'type', 'debit', 'credit', 'commission', 'reference', 'entry_at'],
+    fields: [['salesman_uuid', 'Salesman UUID'], ['salesman_name', 'Salesman Name'], ['type', 'Type'], ['debit', 'Debit', 'number'], ['credit', 'Credit', 'number'], ['commission', 'Commission', 'number'], ['reference', 'Reference'], ['entry_at', 'Entry At', 'date']],
+  },
+  trader_distributor_ledgers: {
+    title: 'Distributor Ledger',
+    store: 'trader_distributor_ledgers',
+    search: ['type', 'description', 'reference'],
+    columns: ['type', 'description', 'debit', 'credit', 'reference', 'entry_at'],
+    fields: [['type', 'Type'], ['description', 'Description'], ['debit', 'Debit', 'number'], ['credit', 'Credit', 'number'], ['reference', 'Reference'], ['entry_at', 'Entry At', 'date']],
   },
   repairs: {
     title: 'Repair Management',
@@ -341,6 +435,20 @@ const CATALOG_PRESETS = {
     ['Soap', 'Personal Care', 'General', 'Soap', 'Single', 'Single Unit'], ['Shampoo', 'Personal Care', 'General', 'Shampoo', 'Bottle', 'Bottle'], ['Toothpaste', 'Personal Care', 'General', 'Toothpaste', 'Tube', 'Single Unit'], ['Face Wash', 'Personal Care', 'General', 'Face Wash', 'Tube', 'Single Unit'],
     ['Detergent', 'Household', 'General', 'Laundry', 'Pack', 'Pack'], ['Dish Wash', 'Household', 'General', 'Cleaning', 'Bottle', 'Bottle'], ['Tissue', 'Household', 'General', 'Tissue', 'Box', 'Box'], ['Cleaning Products', 'Household', 'General', 'Cleaning', 'Bottle', 'Bottle'],
   ],
+  Traders: [
+    ['Coca Cola 500ml', 'Beverages', 'Coca Cola', 'Soft Drink', '500ml', 'Carton'],
+    ['Sprite 500ml', 'Beverages', 'Sprite', 'Soft Drink', '500ml', 'Carton'],
+    ['Fanta 500ml', 'Beverages', 'Fanta', 'Soft Drink', '500ml', 'Carton'],
+    ['Pepsi 500ml', 'Beverages', 'Pepsi', 'Soft Drink', '500ml', 'Carton'],
+    ['Mountain Dew 500ml', 'Beverages', 'Mountain Dew', 'Soft Drink', '500ml', 'Carton'],
+    ['Aquafina 1.5L', 'Water', 'Aquafina', 'Mineral Water', '1.5L', 'Carton'],
+    ['Nestle Pure Life 1.5L', 'Water', 'Nestle', 'Mineral Water', '1.5L', 'Carton'],
+    ['Nestle Fruita Vitals 1L', 'Juices', 'Nestle', 'Juice', '1L', 'Carton'],
+    ['Shezan Juice 1L', 'Juices', 'Shezan', 'Juice', '1L', 'Carton'],
+    ['Mitchells Squash', 'Juices', 'Mitchells', 'Squash', 'Bottle', 'Carton'],
+    ['Olpers Milk 1L', 'Dairy', 'OLPERS', 'Milk', '1L', 'Carton'],
+    ['National Foods Masala', 'Grocery', 'National Foods', 'Spices', 'Pack', 'Box'],
+  ],
   'Electronics Store': [
     ['LED Bulb 12W', 'Electronics', 'Generic'], ['Extension Lead', 'Electronics', 'Generic'], ['HDMI Cable', 'Accessories', 'Generic'], ['Remote Control', 'Accessories', 'Generic'],
   ],
@@ -390,6 +498,14 @@ const MOBILE_SHOP_REMOTE_STORES = [
   'inventory_transactions', 'cashbook', 'customer_ledgers', 'supplier_ledgers',
   'imei_registry', 'imei_movements', 'warranty_claims', 'sale_returns', 'sale_return_items',
   'purchase_returns', 'purchase_return_items',
+];
+
+const TRADERS_REMOTE_STORES = [
+  'products', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items',
+  'inventory_transactions', 'cashbook', 'trader_companies', 'trader_brands',
+  'trader_territories', 'trader_routes', 'trader_salesmen', 'trader_retailers',
+  'trader_delivery_challans', 'trader_recoveries', 'trader_salesman_ledgers',
+  'trader_distributor_ledgers', 'master_catalogs',
 ];
 
 const HEADER_LABELS = {
@@ -468,7 +584,10 @@ function App() {
     if (auth.token && navigator.onLine && (brand?.business_type === 'Mobile Shop' || localStorage.getItem('dsh_business_type') === 'Mobile Shop')) {
       await hydrateRemoteStores(MOBILE_SHOP_REMOTE_STORES);
     }
-    const stores = ['products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items', 'expenses', 'repairs', 'repair_updates', 'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'medicines', 'payments', 'cashbook', 'users', 'settings', 'notifications', 'licenses', 'audit_logs', 'inventory_transactions', 'customer_ledgers', 'supplier_ledgers', 'imei_registry', 'imei_movements', 'warranty_claims', 'sale_returns', 'sale_return_items', 'purchase_returns', 'purchase_return_items', 'sync_queue'];
+    if (auth.token && navigator.onLine && businessTypeKey(brand?.business_type || localStorage.getItem('dsh_business_type')) === 'traders') {
+      await hydrateRemoteStores(TRADERS_REMOTE_STORES);
+    }
+    const stores = ['products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items', 'expenses', 'repairs', 'repair_updates', 'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'medicines', 'payments', 'cashbook', 'users', 'settings', 'notifications', 'licenses', 'audit_logs', 'inventory_transactions', 'customer_ledgers', 'supplier_ledgers', 'imei_registry', 'imei_movements', 'warranty_claims', 'sale_returns', 'sale_return_items', 'purchase_returns', 'purchase_return_items', 'trader_companies', 'trader_brands', 'trader_territories', 'trader_routes', 'trader_salesmen', 'trader_retailers', 'trader_delivery_challans', 'trader_recoveries', 'trader_salesman_ledgers', 'trader_distributor_ledgers', 'sync_queue'];
     const entries = await Promise.all(stores.map(async (store) => [store, await listRecords(store)]));
     const currentBrand = await getBrandSettings();
     setData(Object.fromEntries(entries));
@@ -613,6 +732,16 @@ function App() {
           {active === 'repairReceipts' && <ManualRepairReceipts rows={data.manual_repair_receipts || []} brand={brand} refresh={refresh} />}
           {active === 'warrantyClaims' && <CrudModule config={RESOURCES.warranty_claims} rows={data.warranty_claims || []} refresh={refresh} />}
           {active === 'returns' && <ReturnsModule data={data} refresh={refresh} />}
+          {active === 'traderCompanies' && <CrudModule config={RESOURCES.trader_companies} rows={data.trader_companies || []} refresh={refresh} />}
+          {active === 'traderBrands' && <CrudModule config={RESOURCES.trader_brands} rows={data.trader_brands || []} refresh={refresh} />}
+          {active === 'traderTerritories' && <CrudModule config={RESOURCES.trader_territories} rows={data.trader_territories || []} refresh={refresh} />}
+          {active === 'traderRoutes' && <CrudModule config={RESOURCES.trader_routes} rows={data.trader_routes || []} refresh={refresh} />}
+          {active === 'traderSalesmen' && <CrudModule config={RESOURCES.trader_salesmen} rows={data.trader_salesmen || []} refresh={refresh} />}
+          {active === 'traderRetailers' && <CrudModule config={RESOURCES.trader_retailers} rows={data.trader_retailers || []} refresh={refresh} />}
+          {active === 'traderChallans' && <CrudModule config={RESOURCES.trader_delivery_challans} rows={data.trader_delivery_challans || []} refresh={refresh} />}
+          {active === 'traderRecoveries' && <CrudModule config={RESOURCES.trader_recoveries} rows={data.trader_recoveries || []} refresh={refresh} />}
+          {active === 'traderSalesmanLedger' && <CrudModule config={RESOURCES.trader_salesman_ledgers} rows={data.trader_salesman_ledgers || []} refresh={refresh} />}
+          {active === 'traderDistributorLedger' && <CrudModule config={RESOURCES.trader_distributor_ledgers} rows={data.trader_distributor_ledgers || []} refresh={refresh} />}
           {active === 'purchases' && <Purchases data={data} refresh={refresh} />}
           {active === 'suppliers' && <CrudModule config={RESOURCES.suppliers} rows={data.suppliers || []} refresh={refresh} extraActions={(row) => <button className="ghost-btn" onClick={() => printLedger(row, data.supplier_ledgers || [], 'supplier_uuid')}><Printer size={15} /> Ledger</button>} />}
           {active === 'expenses' && <CrudModule config={RESOURCES.expenses} rows={data.expenses || []} refresh={refresh} />}
@@ -708,10 +837,29 @@ function inventoryRows(rows) {
   });
 }
 
+function sameDayLocal(value) {
+  return String(value || '').slice(0, 10) === new Date().toISOString().slice(0, 10);
+}
+
+function groupDashboardRows(rows, key) {
+  return Object.values((rows || []).reduce((acc, row) => {
+    const name = row[key] || 'Unassigned';
+    acc[name] ||= { uuid: name, name, total: 0, count: 0 };
+    acc[name].total += Number(row.total || row.amount || 0);
+    acc[name].count += 1;
+    return acc;
+  }, {})).sort((a, b) => b.total - a.total);
+}
+
+function topByMoney(rows, key) {
+  return groupDashboardRows(rows, key)[0]?.name || 'No Data Available';
+}
+
 function Dashboard({ snapshot, data, brand, auth, refresh }) {
   if (auth?.role === 'Super Admin') return <SuperAdminDashboard data={data} refresh={refresh} />;
   if (brand?.business_type === 'Hospital') return <HospitalDashboard data={data} auth={auth} brand={brand} refresh={refresh} />;
   const businessType = brand?.business_type || 'General Store';
+  if (businessTypeKey(businessType) === 'traders') return <TradersDashboard data={data} snapshot={snapshot} />;
   const supportsRepairs = REPAIR_SHOP_TYPES.has(businessType);
   const retailCards = [
     ['Today Orders', snapshot?.todayOrders, false],
@@ -735,6 +883,25 @@ function Dashboard({ snapshot, data, brand, auth, refresh }) {
   const pendingRepairs = [...(data.repairs || []), ...(data.manual_repair_receipts || [])].filter((row) => !['Delivered', 'Completed'].includes(row.status));
   const max = Math.max(...sales.slice(0, 8).map((sale) => Number(sale.total)), 1);
   return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? (value || 'No Data Available') : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div>{showWalletDashboard && <WalletDashboard wallets={wallets} />}<section className="panel"><div className="module-head"><h2>Sales Performance</h2><span className="shortcut-pill"><BarChart3 size={15} /> Last {Math.min(sales.length, 8)} invoices</span></div>{sales.length ? <SalesChart sales={sales} max={max} /> : <DashboardEmpty icon={BarChart3} title="No Sales Data Available" description="Start creating sales to see analytics." />}</section><section className="split"><DashboardTable title="Top Customers" rows={snapshot?.topCustomers || []} cols={['name', 'phone', 'total_spent', 'balance']} emptyIcon={Users} emptyTitle={customers.length ? 'No Spending History Available' : 'No Customer Data Available'} emptyDescription={customers.length ? 'Customer spend totals will appear after sales are recorded.' : 'Create customers or complete sales to build this leaderboard.'} /><DashboardTable title="Low Stock Alerts" rows={snapshot?.lowStock || []} cols={['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={products.length ? 'All Stock Levels Healthy' : 'No Inventory Data Available'} emptyDescription={products.length ? 'Products below their low stock threshold will appear here.' : 'Add inventory or receive stock from Purchases to enable alerts.'} /></section><section className="split"><DashboardTable title="Recent Sales" rows={snapshot?.recentSales || []} cols={['invoice_number', 'customer_name', 'total', 'paid', 'balance']} emptyIcon={ReceiptText} emptyTitle="No Recent Sales Available" emptyDescription="Completed invoices will appear here automatically." />{supportsRepairs ? <DashboardTable title="Pending Repairs" rows={pendingRepairs} cols={['job_number', 'receipt_number', 'customer_name', 'device_name', 'status']} emptyIcon={Wrench} emptyTitle="No Pending Repairs" emptyDescription="Open repair jobs and manual repair receipts will appear here." /> : <DashboardTable title={businessType === 'Pharmacy' ? 'Near Expiry Medicines' : 'Inventory Watch'} rows={businessType === 'Pharmacy' ? nearExpiryProducts(products) : snapshot?.lowStock || []} cols={businessType === 'Pharmacy' ? ['product_name', 'batch_number', 'expiry_date', 'quantity'] : ['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={businessType === 'Pharmacy' ? 'No Near Expiry Medicines' : 'Inventory Looks Good'} emptyDescription={businessType === 'Pharmacy' ? 'Medicines close to expiry will appear here.' : 'Stock issues will appear here automatically.'} />}</section></div>;
+}
+
+function TradersDashboard({ data }) {
+  const sales = data.sales || [];
+  const recoveries = data.trader_recoveries || [];
+  const retailers = data.trader_retailers || [];
+  const saleItems = data.sale_items || [];
+  const todaySales = sales.filter((sale) => sameDayLocal(sale.sold_at)).reduce((sum, sale) => sum + Number(sale.total || 0), 0);
+  const todayRecovery = recoveries.filter((row) => sameDayLocal(row.date || row.recovered_at || row.created_at)).reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const cards = [
+    ['Today Sales', todaySales],
+    ['Today Recovery', todayRecovery],
+    ['Outstanding Receivables', retailers.reduce((sum, row) => sum + Number(row.balance || 0), 0)],
+    ['Top Salesman', topByMoney(sales, 'salesman_name')],
+    ['Top Route', topByMoney(sales, 'route_name')],
+    ['Top Brand', topByMoney(saleItems, 'brand')],
+    ['Monthly Profit', sales.filter((sale) => String(sale.sold_at || '').startsWith(new Date().toISOString().slice(0, 7))).reduce((sum, sale) => sum + Number(sale.profit || 0), 0)],
+  ];
+  return <div className="stack"><div className="metric-grid">{cards.map(([label, value]) => <div className="metric animated" key={label}><span>{label}</span><strong>{typeof value === 'number' ? money(value) : value}</strong></div>)}</div><section className="split"><DashboardTable title="Route Performance" rows={groupDashboardRows(sales, 'route_name')} cols={['name', 'total', 'count']} emptyIcon={FileText} emptyTitle="No Route Sales" emptyDescription="Route sales will appear after van sales are recorded." /><DashboardTable title="Recovery History" rows={recoveries.slice(0, 10)} cols={['retailer_name', 'salesman_name', 'amount', 'payment_method', 'date']} emptyIcon={WalletCards} emptyTitle="No Recovery Data" emptyDescription="Recoveries collected from retailers will appear here." /></section></div>;
 }
 
 function nearExpiryProducts(products) {
@@ -1221,8 +1388,10 @@ function POS2({ data, brand, refresh }) {
   const [cart, setCart] = useState([]);
   const [payment, setPayment] = useState({ customer_uuid: '', payment_type: 'cash', discount: 0, tax: brand?.tax || 0, paid: 0, due_date: '' });
   const [quick, setQuick] = useState({ name: '', phone: '', address: '', cnic: '', notes: '' });
+  const isTraders = businessTypeKey(brand?.business_type) === 'traders';
   const products = filterRows(data.products || [], query, ['product_name', 'barcode', 'sku', 'imei', 'imei_numbers', 'brand', 'model', 'batch_number']);
-  const customer = (data.customers || []).find((item) => item.uuid === payment.customer_uuid);
+  const customerOptions = isTraders ? (data.trader_retailers || []).map((item) => ({ ...item, name: item.shop_name || item.owner_name })) : (data.customers || []);
+  const customer = customerOptions.find((item) => item.uuid === payment.customer_uuid);
   const subtotal = cart.reduce((sum, item) => sum + Number(item.quantity) * Number(item.price), 0);
   const total = subtotal - Number(payment.discount || 0) + Number(payment.tax || 0);
   const paid = payment.payment_type === 'credit' ? 0 : Number(payment.paid || total);
@@ -1242,7 +1411,8 @@ function POS2({ data, brand, refresh }) {
   }
 
   async function completeSale() {
-    const sale = await createSale({ ...payment, paid, cart });
+    const retailer = isTraders ? customer : null;
+    const sale = await createSale({ ...payment, paid, retailer_uuid: retailer?.uuid || payment.customer_uuid, retailer_name: retailer?.shop_name || retailer?.name, route_uuid: retailer?.route_uuid, route_name: retailer?.route_name, territory_uuid: retailer?.territory_uuid, territory_name: retailer?.territory_name, cart });
     setCart([]);
     setPayment({ customer_uuid: '', payment_type: 'cash', discount: 0, tax: brand?.tax || 0, paid: 0, due_date: '' });
     await refresh();
@@ -1284,7 +1454,7 @@ function POS2({ data, brand, refresh }) {
     return () => window.removeEventListener('keydown', handler);
   }, [cart, payment, quick, brand]);
 
-  return <div className="pos-grid"><section className="panel"><div className="module-head"><h2>Modern POS</h2><span className="shortcut-pill"><Keyboard size={15} /> F1 New - F2 Customer - F3 Product - F4 Checkout - F5 Print</span></div><SearchBox value={query} onChange={setQuery} placeholder="Product search, barcode, SKU or serial" inputProps={{ 'data-product-search': true }} /><div className="product-picker">{products.length ? products.map((product) => <button key={product.uuid} onClick={() => addToCart(product)}><div className="product-thumb">{product.image ? <img src={product.image} alt="" /> : <Smartphone size={22} />}</div><strong>{product.product_name}</strong><span>{product.barcode || product.sku || imeiListText(product)}</span><b>{money(product.sale_price)}</b><small>{product.quantity} in stock</small></button>) : <EmptyRows />}</div></section><section className="panel cart-panel"><h2>Quick Cart & Fast Checkout</h2><DataTable rows={cart} columns={['product_name', 'imei_numbers', 'quantity', 'price']} actions={(row) => <button className="danger-btn" onClick={() => setCart(cart.filter((item) => item.product_uuid !== row.product_uuid))}><Trash2 size={15} /></button>} editable={(row, key, value) => setCart(cart.map((item) => item.product_uuid === row.product_uuid ? { ...item, [key]: ['quantity', 'price'].includes(key) ? Number(value) : value } : item))} /><div className="quick-customer"><strong>Quick Customer Entry</strong><div className="inline-form quick"><input placeholder="Name" value={quick.name} onChange={(e) => setQuick({ ...quick, name: e.target.value })} /><input placeholder="Phone" value={quick.phone} onChange={(e) => setQuick({ ...quick, phone: e.target.value })} /><input placeholder="Address" value={quick.address} onChange={(e) => setQuick({ ...quick, address: e.target.value })} /><input placeholder="CNIC" value={quick.cnic} onChange={(e) => setQuick({ ...quick, cnic: e.target.value })} /><input placeholder="Notes" value={quick.notes} onChange={(e) => setQuick({ ...quick, notes: e.target.value })} /><button className="ghost-btn" type="button" onClick={createWalkIn} disabled={!quick.name && !quick.phone}><Plus size={15} /> Create Customer</button></div></div><div className="form-grid"><label>Customer<select data-customer-select value={payment.customer_uuid} onChange={(e) => setPayment({ ...payment, customer_uuid: e.target.value })}><option value="">Walk-in Customer</option>{(data.customers || []).map((item) => <option key={item.uuid} value={item.uuid}>{item.name} {item.phone ? `- ${item.phone}` : ''}</option>)}</select></label><label>Payment<select value={payment.payment_type} onChange={(e) => setPayment({ ...payment, payment_type: e.target.value })}><option value="cash">Cash</option><option value="credit">Credit</option><option value="partial">Partial</option></select></label><label>Discount<input type="number" value={payment.discount} onChange={(e) => setPayment({ ...payment, discount: e.target.value })} /></label><label>Tax<input type="number" value={payment.tax} onChange={(e) => setPayment({ ...payment, tax: e.target.value })} /></label><label>Paid<input data-paid-input type="number" value={payment.payment_type === 'credit' ? 0 : payment.paid || total} onChange={(e) => setPayment({ ...payment, paid: e.target.value })} /></label><label>Due Date<input type="date" value={payment.due_date} onChange={(e) => setPayment({ ...payment, due_date: e.target.value })} /></label></div><div className="totals"><span>Subtotal {money(subtotal)}</span><strong>Total {money(total)}</strong></div><div className="button-row"><button className="primary-btn" disabled={!cart.length} onClick={completeSale}><ReceiptText size={18} /> Save Sale</button><button className="ghost-btn" disabled={!cart.length} onClick={() => printInvoice(draftInvoice, cart, brand)}><Printer size={16} /> Print</button><button className="ghost-btn" disabled={!cart.length} onClick={() => downloadPdf('invoice.pdf', 'Sales Invoice', invoicePdfLines(draftInvoice, cart, brand))}><FileDown size={16} /> PDF</button><button className="ghost-btn" disabled={!cart.length} onClick={shareInvoiceOnWhatsApp}><MessageCircle size={16} /> WhatsApp</button></div></section></div>;
+  return <div className="pos-grid"><section className="panel"><div className="module-head"><h2>Modern POS</h2><span className="shortcut-pill"><Keyboard size={15} /> F1 New - F2 Customer - F3 Product - F4 Checkout - F5 Print</span></div><SearchBox value={query} onChange={setQuery} placeholder="Product search, barcode, SKU or serial" inputProps={{ 'data-product-search': true }} /><div className="product-picker">{products.length ? products.map((product) => <button key={product.uuid} onClick={() => addToCart(product)}><div className="product-thumb">{product.image ? <img src={product.image} alt="" /> : <Smartphone size={22} />}</div><strong>{product.product_name}</strong><span>{product.barcode || product.sku || imeiListText(product)}</span><b>{money(product.sale_price)}</b><small>{product.quantity} in stock</small></button>) : <EmptyRows />}</div></section><section className="panel cart-panel"><h2>Quick Cart & Fast Checkout</h2><DataTable rows={cart} columns={['product_name', 'imei_numbers', 'quantity', 'price']} actions={(row) => <button className="danger-btn" onClick={() => setCart(cart.filter((item) => item.product_uuid !== row.product_uuid))}><Trash2 size={15} /></button>} editable={(row, key, value) => setCart(cart.map((item) => item.product_uuid === row.product_uuid ? { ...item, [key]: ['quantity', 'price'].includes(key) ? Number(value) : value } : item))} />{!isTraders && <div className="quick-customer"><strong>Quick Customer Entry</strong><div className="inline-form quick"><input placeholder="Name" value={quick.name} onChange={(e) => setQuick({ ...quick, name: e.target.value })} /><input placeholder="Phone" value={quick.phone} onChange={(e) => setQuick({ ...quick, phone: e.target.value })} /><input placeholder="Address" value={quick.address} onChange={(e) => setQuick({ ...quick, address: e.target.value })} /><input placeholder="CNIC" value={quick.cnic} onChange={(e) => setQuick({ ...quick, cnic: e.target.value })} /><input placeholder="Notes" value={quick.notes} onChange={(e) => setQuick({ ...quick, notes: e.target.value })} /><button className="ghost-btn" type="button" onClick={createWalkIn} disabled={!quick.name && !quick.phone}><Plus size={15} /> Create Customer</button></div></div>}<div className="form-grid"><label>{isTraders ? 'Retailer' : 'Customer'}<select data-customer-select value={payment.customer_uuid} onChange={(e) => setPayment({ ...payment, customer_uuid: e.target.value })}><option value="">{isTraders ? 'Select retailer' : 'Walk-in Customer'}</option>{customerOptions.map((item) => <option key={item.uuid} value={item.uuid}>{item.name || item.shop_name} {item.phone ? `- ${item.phone}` : ''}</option>)}</select></label><label>Payment<select value={payment.payment_type} onChange={(e) => setPayment({ ...payment, payment_type: e.target.value })}><option value="cash">Cash</option><option value="credit">Credit</option><option value="partial">Partial</option></select></label><label>Discount<input type="number" value={payment.discount} onChange={(e) => setPayment({ ...payment, discount: e.target.value })} /></label><label>Tax<input type="number" value={payment.tax} onChange={(e) => setPayment({ ...payment, tax: e.target.value })} /></label><label>Paid<input data-paid-input type="number" value={payment.payment_type === 'credit' ? 0 : payment.paid || total} onChange={(e) => setPayment({ ...payment, paid: e.target.value })} /></label><label>Due Date<input type="date" value={payment.due_date} onChange={(e) => setPayment({ ...payment, due_date: e.target.value })} /></label></div><div className="totals"><span>Subtotal {money(subtotal)}</span><strong>Total {money(total)}</strong></div><div className="button-row"><button className="primary-btn" disabled={!cart.length} onClick={completeSale}><ReceiptText size={18} /> Save Sale</button><button className="ghost-btn" disabled={!cart.length} onClick={() => printInvoice(draftInvoice, cart, brand)}><Printer size={16} /> Print</button><button className="ghost-btn" disabled={!cart.length} onClick={() => downloadPdf('invoice.pdf', 'Sales Invoice', invoicePdfLines(draftInvoice, cart, brand))}><FileDown size={16} /> PDF</button><button className="ghost-btn" disabled={!cart.length} onClick={shareInvoiceOnWhatsApp}><MessageCircle size={16} /> WhatsApp</button></div></section></div>;
 }
 
 function Credit({ data, refresh }) {
@@ -1661,11 +1831,13 @@ function formatReportRows(type, rows = []) {
 function reportTypesForBusiness(brand) {
   const type = brand?.business_type || 'General Store';
   const retail = ['daily_sales', 'weekly_sales', 'monthly_sales', 'yearly_sales', 'product_sales', 'top_products', 'profit', 'inventory', 'low_stock', 'near_expiry', 'expired_products', 'customers', 'expenses', 'suppliers', 'purchases', 'customer_ledger', 'supplier_ledger', 'credit_recovery', 'mobile_wallets'];
+  const traders = ['route_sales', 'route_recovery', 'route_profit', 'company_wise_sales', 'brand_wise_sales', 'product_wise_sales', 'outstanding_customers', 'recovery_history', 'aging_report', 'salesman_ledger', 'distributor_ledger', 'daily_sales', 'monthly_sales', 'profit', 'inventory'];
   const repair = ['repairs'];
   const pharmacy = ['medicines', 'low_stock_medicines', 'near_expiry_medicines', 'expired_medicines', 'manufacturer_reports', 'category_reports'];
   const hospital = ['patients', 'daily_patients', 'monthly_patients', 'doctor_performance', 'hospital_revenue', 'lab_report_summary', 'radiology_report_summary', 'pharmacy_prescriptions', 'follow_up_report', 'pending_bills', 'top_medicines', 'assistants', 'expenses'];
   if (type === 'Hospital') return hospital;
   if (type === 'Pharmacy') return [...retail, ...pharmacy];
+  if (businessTypeKey(type) === 'traders') return traders;
   if (REPAIR_SHOP_TYPES.has(type)) return [...retail, ...repair];
   return retail;
 }
@@ -2247,6 +2419,13 @@ function backupStoresForBusiness(role, businessType = 'General Store') {
     'patients', 'assistants', 'hospital_prescriptions', 'hospital_orders', 'hospital_tasks',
     'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items', 'expenses', 'payments', 'cashbook',
     'settings', 'notifications', 'master_catalogs', 'medicines', 'sync_queue',
+  ];
+  if (businessTypeKey(businessType) === 'traders') return [
+    'products', 'suppliers', 'supplier_ledgers', 'sales', 'sale_items', 'purchases', 'purchase_items',
+    'expenses', 'payments', 'cashbook', 'users', 'settings', 'notifications', 'inventory_transactions',
+    'master_catalogs', 'trader_companies', 'trader_brands', 'trader_territories', 'trader_routes',
+    'trader_salesmen', 'trader_retailers', 'trader_delivery_challans', 'trader_recoveries',
+    'trader_salesman_ledgers', 'trader_distributor_ledgers', 'sync_queue',
   ];
   const stores = [
     'products', 'categories', 'brands', 'customers', 'customer_ledgers', 'suppliers',
