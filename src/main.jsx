@@ -519,6 +519,9 @@ const HEADER_LABELS = {
   loose_quantity: 'Loose Pcs',
   package_cost_price: 'Cost Per Box',
   total_cost: 'Total Cost',
+  selected_unit: 'Selling Unit',
+  stock_quantity: 'Stock Qty',
+  conversion_factor: 'Contains',
   batch_number: 'Batch',
   expiry_date: 'Expiry',
   manufacturer: 'Manufacturer',
@@ -869,6 +872,98 @@ function productDisplayName(record = {}) {
   add(record.variant_type);
 
   return parts.join(' ') || 'Product';
+}
+
+function saleLineDisplayName(record = {}) {
+  const base = productDisplayName(record);
+  const unit = String(record.selected_unit_label || record.selling_unit_label || '').trim();
+  if (!unit || base.toLowerCase().includes(unit.toLowerCase())) return base;
+  return `${base} ${unit}`;
+}
+
+function lineQuantityLabel(item = {}) {
+  const quantity = Number(item.quantity || 0);
+  return `${quantity} ${item.selected_unit || item.selling_unit || ''}`.trim();
+}
+
+function packagingUnits(product = {}) {
+  const parsed = parsePackagingUnits(product.packaging_units);
+  const baseUnit = product.unit && !['Single Unit', 'Unit'].includes(product.unit) ? product.unit : product.variant_type || 'Piece';
+  const base = {
+    key: 'base',
+    label: baseUnit,
+    unit: baseUnit,
+    factor: 1,
+    sale_price: Number(product.sale_price || product.unit_sale_price || 0),
+    purchase_price: Number(product.purchase_price || product.unit_cost_price || 0),
+    barcode: product.barcode || product.secondary_barcode || product.qr_code || product.sku || '',
+  };
+  const derived = [
+    product.box_barcode || product.units_per_box ? {
+      key: 'box',
+      label: `Box (${Math.max(1, Number(product.units_per_box || product.units_per_package || 1))} ${pluralUnit(baseUnit)})`,
+      unit: 'Box',
+      factor: Math.max(1, Number(product.units_per_box || product.units_per_package || 1)),
+      sale_price: Number(product.box_sale_price || product.package_sale_price || 0),
+      purchase_price: Number(product.box_purchase_price || product.package_cost_price || 0),
+      barcode: product.box_barcode || '',
+    } : null,
+    product.carton_barcode || product.units_per_carton ? {
+      key: 'carton',
+      label: `Carton (${Math.max(1, Number(product.units_per_carton || product.units_per_package || 1))} ${pluralUnit(baseUnit)})`,
+      unit: 'Carton',
+      factor: Math.max(1, Number(product.units_per_carton || product.units_per_package || 1)),
+      sale_price: Number(product.carton_sale_price || 0),
+      purchase_price: Number(product.carton_purchase_price || 0),
+      barcode: product.carton_barcode || '',
+    } : null,
+  ].filter(Boolean);
+  return [base, ...parsed, ...derived].map((unit) => normalizePackagingUnit(unit, base)).filter((unit, index, rows) => rows.findIndex((item) => item.key === unit.key || (item.barcode && item.barcode === unit.barcode)) === index);
+}
+
+function parsePackagingUnits(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizePackagingUnit(unit = {}, base = {}) {
+  const factor = Math.max(1, Number(unit.conversion_factor || unit.factor || unit.contains || 1));
+  const label = unit.label || unit.name || unit.unit || 'Piece';
+  return {
+    key: String(unit.key || label).toLowerCase().replaceAll(' ', '_'),
+    label: factor > 1 && !String(label).includes('(') ? `${label} (${factor} ${pluralUnit(base.unit || 'Piece')})` : label,
+    unit: unit.unit || label,
+    factor,
+    sale_price: Number(unit.sale_price || unit.price || 0) || Number(base.sale_price || 0) * factor,
+    purchase_price: Number(unit.purchase_price || unit.cost_price || 0) || Number(base.purchase_price || 0) * factor,
+    barcode: unit.barcode || unit.code || '',
+  };
+}
+
+function pluralUnit(unit = 'Piece') {
+  const text = String(unit || 'Piece').replace(/\s*\(.*/, '');
+  return text.toLowerCase().endsWith('s') ? text : `${text}s`;
+}
+
+function unitForMatch(product = {}, match = {}) {
+  const units = packagingUnits(product);
+  const type = String(match.match_type || '').toLowerCase();
+  const matched = units.find((unit) => {
+    if (type.includes(unit.key)) return true;
+    if (unit.barcode && normalizeScanValue(unit.barcode) === normalizeScanValue(match.scan)) return true;
+    return false;
+  });
+  return matched || units[0];
+}
+
+function normalizeScanValue(value) {
+  return String(value || '').trim().toLowerCase();
 }
 
 function sameDayLocal(value) {
@@ -1587,18 +1682,54 @@ function POS2({ data, brand, refresh }) {
   const usesImeiTracking = businessTypeKey(brand?.business_type) === 'mobile_shop';
 
   function addToCart(product, match = {}) {
-    const cartKey = match.imei?.uuid || `${product.uuid}:${match.match_type || 'product'}`;
-    const quantity = Math.max(1, Number(match.quantity_multiplier || 1));
+    const unit = unitForMatch(product, match);
+    const cartKey = match.imei?.uuid || `${product.uuid}:${unit.key}`;
+    const quantity = 1;
+    const stockQuantity = unit.factor;
     setCart((items) => items.some((item) => item.cart_key === cartKey)
-      ? items.map((item) => item.cart_key === cartKey ? { ...item, quantity: item.quantity + quantity } : item)
+      ? items.map((item) => item.cart_key === cartKey ? { ...item, quantity: Number(item.quantity || 0) + quantity, stock_quantity: Number(item.stock_quantity || 0) + stockQuantity } : item)
       : [...items, {
         cart_key: cartKey,
         product_uuid: product.uuid,
         product_name: productDisplayName(product),
         ...(usesImeiTracking ? { imei_uuid: match.imei?.uuid, imei: match.imei?.imei_1 || product.imei, imei_numbers: match.imei ? imeiListText(match.imei) : imeiListText(product) } : {}),
         quantity,
-        price: Number(product.sale_price || 0),
+        price: unit.sale_price,
+        stock_quantity: stockQuantity,
+        selected_unit_key: unit.key,
+        selected_unit: unit.unit,
+        selected_unit_label: unit.label,
+        conversion_factor: unit.factor,
+        unit_barcode: unit.barcode,
+        packaging_options: packagingUnits(product),
       }]);
+  }
+
+  function updateCartLine(row, key, value) {
+    setCart((items) => items.map((item) => {
+      if (item.cart_key !== row.cart_key) return item;
+      if (key === 'quantity') {
+        const quantity = Math.max(1, Number(value || 1));
+        return { ...item, quantity, stock_quantity: quantity * Number(item.conversion_factor || 1) };
+      }
+      if (key === 'selected_unit') {
+        const unit = (item.packaging_options || []).find((option) => option.key === value || option.unit === value) || item.packaging_options?.[0];
+        if (!unit) return item;
+        const quantity = Math.max(1, Number(item.quantity || 1));
+        return {
+          ...item,
+          cart_key: `${item.product_uuid}:${unit.key}`,
+          selected_unit_key: unit.key,
+          selected_unit: unit.unit,
+          selected_unit_label: unit.label,
+          conversion_factor: unit.factor,
+          unit_barcode: unit.barcode,
+          price: unit.sale_price,
+          stock_quantity: quantity * unit.factor,
+        };
+      }
+      return { ...item, [key]: ['price'].includes(key) ? Number(value) : value };
+    }));
   }
 
   function scanToCart(match) {
@@ -1685,9 +1816,9 @@ function POS2({ data, brand, refresh }) {
         </div>
         <DataTable
           rows={cart}
-          columns={['product_name', 'imei_numbers', 'quantity', 'price']}
+          columns={['product_name', 'selected_unit', 'stock_quantity', 'quantity', 'price']}
           actions={(row) => <button className="danger-btn" onClick={() => setCart(cart.filter((item) => item.cart_key !== row.cart_key))}><Trash2 size={15} /></button>}
-          editable={(row, key, value) => setCart(cart.map((item) => item.cart_key === row.cart_key ? { ...item, [key]: ['quantity', 'price'].includes(key) ? Number(value) : value } : item))}
+          editable={updateCartLine}
         />
 
         <div className="customer-collapsible">
@@ -1845,7 +1976,7 @@ function Purchases({ data, refresh }) {
       return current.map((row) => row.cart_key === cartKey ? { ...row, quantity: Number(row.quantity || 0) + Number(item.quantity || 1), cost_price: item.cost_price || row.cost_price } : row);
     });
   }
-  return <div className="stack"><section className="panel"><ModuleHeader title="Purchase Management" query={query} setQuery={setQuery} onAdd={() => setCreating(true)} onExport={() => exportCsv('purchases.csv', filtered)} onPrint={() => printTable('Purchases', filtered, ['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status'])} /><DataTable rows={filtered} columns={['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status']} onAdd={() => setCreating(true)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => printPurchaseReceipt(row)}><Printer size={15} /> Receipt</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Purchase Detail" row={viewing} columns={['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status', 'purchased_at']} onClose={() => setViewing(null)} />}{creating && <ModalShell onClose={closeCreate}><form onSubmit={submit}><div className="modal-header"><h2>Add Purchase</h2><button type="button" className="icon-btn" onClick={closeCreate} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Supplier<select value={form.supplier_uuid} onChange={(e) => setForm({ ...form, supplier_uuid: e.target.value })}><option value="">Select supplier</option>{(data.suppliers || []).map((supplier) => <option key={supplier.uuid} value={supplier.uuid}>{supplier.supplier_name}</option>)}</select></label><label>Invoice Number<input value={form.invoice_number} onChange={(e) => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Paid<input type="number" value={form.paid} onChange={(e) => setForm({ ...form, paid: e.target.value })} /></label></div><ProductLine products={data.products || []} data={data} onAdd={addPurchaseLine} /><DataTable rows={cart} columns={['product_name', 'imei_numbers', 'quantity', 'cost_price']} actions={(row) => <button type="button" className="danger-btn" onClick={() => setCart(cart.filter((item) => item.cart_key !== row.cart_key))}><Trash2 size={15} /></button>} /><div className="totals"><strong>Total {money(total)}</strong></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={closeCreate}>Cancel</button><button className="primary-btn" disabled={!cart.length}>Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="purchases" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  return <div className="stack"><section className="panel"><ModuleHeader title="Purchase Management" query={query} setQuery={setQuery} onAdd={() => setCreating(true)} onExport={() => exportCsv('purchases.csv', filtered)} onPrint={() => printTable('Purchases', filtered, ['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status'])} /><DataTable rows={filtered} columns={['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status']} onAdd={() => setCreating(true)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => printPurchaseReceipt(row)}><Printer size={15} /> Receipt</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Purchase Detail" row={viewing} columns={['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status', 'purchased_at']} onClose={() => setViewing(null)} />}{creating && <ModalShell onClose={closeCreate}><form onSubmit={submit}><div className="modal-header"><h2>Add Purchase</h2><button type="button" className="icon-btn" onClick={closeCreate} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Supplier<select value={form.supplier_uuid} onChange={(e) => setForm({ ...form, supplier_uuid: e.target.value })}><option value="">Select supplier</option>{(data.suppliers || []).map((supplier) => <option key={supplier.uuid} value={supplier.uuid}>{supplier.supplier_name}</option>)}</select></label><label>Invoice Number<input value={form.invoice_number} onChange={(e) => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Paid<input type="number" value={form.paid} onChange={(e) => setForm({ ...form, paid: e.target.value })} /></label></div><ProductLine products={data.products || []} data={data} onAdd={addPurchaseLine} /><DataTable rows={cart} columns={['product_name', 'selected_unit', 'stock_quantity', 'quantity', 'cost_price']} actions={(row) => <button type="button" className="danger-btn" onClick={() => setCart(cart.filter((item) => item.cart_key !== row.cart_key))}><Trash2 size={15} /></button>} /><div className="totals"><strong>Total {money(total)}</strong></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={closeCreate}>Cancel</button><button className="primary-btn" disabled={!cart.length}>Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="purchases" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function ProductLine({ products, onAdd, data }) {
@@ -1858,21 +1989,27 @@ function ProductLine({ products, onAdd, data }) {
         notify('Scanned item is in catalog only. Add it to inventory first.');
         return;
       }
+      const unit = unitForMatch(match.product, match);
       onAdd({
-        cart_key: match.imei?.uuid || `${match.product.uuid}:${match.match_type || 'scan'}`,
+        cart_key: match.imei?.uuid || `${match.product.uuid}:${unit.key}`,
         product_uuid: match.product.uuid,
         product_name: productDisplayName(match.product),
-        quantity: Math.max(1, Number(match.quantity_multiplier || 1)),
-        cost_price: Number(match.product.purchase_price || match.product.cost_price || 0),
+        quantity: 1,
+        stock_quantity: unit.factor,
+        selected_unit_key: unit.key,
+        selected_unit: unit.unit,
+        selected_unit_label: unit.label,
+        conversion_factor: unit.factor,
+        unit_barcode: unit.barcode,
+        cost_price: unit.purchase_price || Number(match.product.purchase_price || match.product.cost_price || 0),
         imei_numbers: match.imei ? imeiListText(match.imei) : '',
       });
       setScan('');
-      setScanMatch(null);
     } catch (error) {
       notify(error.message || 'Purchase scan failed');
     }
   }
-  return <div className="stack compact"><UniversalProductLookup value={scan} data={data || { products }} onChange={setScan} onPick={addScannedProduct} /><div className="inline-form"><select value={line.product_uuid} onChange={(e) => setLine({ ...line, product_uuid: e.target.value })}><option value="">Product</option>{products.map((item) => <option key={item.uuid} value={item.uuid}>{productDisplayName(item)}</option>)}</select><input type="number" value={line.quantity} onChange={(e) => setLine({ ...line, quantity: e.target.value })} /><input type="number" value={line.cost_price} onChange={(e) => setLine({ ...line, cost_price: e.target.value })} /><input placeholder="IMEI numbers" value={line.imei_numbers} onChange={(e) => setLine({ ...line, imei_numbers: e.target.value })} /><button type="button" className="ghost-btn" onClick={() => product && onAdd({ ...line, cart_key: `${line.product_uuid}:${line.imei_numbers || 'manual'}`, product_name: productDisplayName(product) })}><Plus size={15} /> Add</button></div></div>;
+  return <div className="stack compact"><UniversalProductLookup value={scan} data={data || { products }} onChange={setScan} onPick={addScannedProduct} /><div className="inline-form"><select value={line.product_uuid} onChange={(e) => setLine({ ...line, product_uuid: e.target.value })}><option value="">Product</option>{products.map((item) => <option key={item.uuid} value={item.uuid}>{productDisplayName(item)}</option>)}</select><input type="number" value={line.quantity} onChange={(e) => setLine({ ...line, quantity: e.target.value })} /><input type="number" value={line.cost_price} onChange={(e) => setLine({ ...line, cost_price: e.target.value })} /><input placeholder="IMEI numbers" value={line.imei_numbers} onChange={(e) => setLine({ ...line, imei_numbers: e.target.value })} /><button type="button" className="ghost-btn" onClick={() => product && onAdd({ ...line, cart_key: `${line.product_uuid}:${line.imei_numbers || 'manual'}`, product_name: productDisplayName(product), stock_quantity: Number(line.quantity || 1), selected_unit: packagingUnits(product)[0]?.unit, selected_unit_label: packagingUnits(product)[0]?.label, conversion_factor: 1 })}><Plus size={15} /> Add</button></div></div>;
 }
 
 function Notifications({ data, refresh, auth }) {
@@ -2180,7 +2317,7 @@ function DataTable({ rows, columns, actions, editable, onAdd }) {
   function toggleSort(column) {
     setSort((current) => current.key === column ? { key: column, dir: current.dir === 'asc' ? 'desc' : 'asc' } : { key: column, dir: 'asc' });
   }
-  return <div className="data-table"><div className="table-wrap"><table><thead><tr>{columns.map((column) => <th key={column}><button className="sort-head" onClick={() => toggleSort(column)}>{headerLabel(column)}<span>{sort.key === column ? (sort.dir === 'asc' ? '^' : 'v') : '-'}</span></button></th>)}{actions && <th className="actions-head">Actions</th>}</tr></thead><tbody>{pageRows.length ? pageRows.map((row, index) => <tr key={row.uuid || index}>{columns.map((column) => <td key={column} title={String(displayCellValue(row, column) ?? '')}>{editable && ['quantity', 'price'].includes(column) ? <input className="cell-input" type="number" value={row[column]} onChange={(e) => editable(row, column, e.target.value)} /> : format(row[column], column, row)}</td>)}{actions && <td className="actions-cell"><div className="row-actions">{actions(row)}</div></td>}</tr>) : <tr><td colSpan={columns.length + (actions ? 1 : 0)}><EmptyRows onAdd={onAdd} /></td></tr>}</tbody></table></div><div className="table-footer"><span>Showing {start}-{end} of {total} records</span><div className="pagination"><button className="ghost-btn" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>Previous</button><span>Page {safePage} / {pages}</span><button className="ghost-btn" disabled={safePage >= pages} onClick={() => setPage(safePage + 1)}>Next</button></div></div></div>;
+  return <div className="data-table"><div className="table-wrap"><table><thead><tr>{columns.map((column) => <th key={column}><button className="sort-head" onClick={() => toggleSort(column)}>{headerLabel(column)}<span>{sort.key === column ? (sort.dir === 'asc' ? '^' : 'v') : '-'}</span></button></th>)}{actions && <th className="actions-head">Actions</th>}</tr></thead><tbody>{pageRows.length ? pageRows.map((row, index) => <tr key={row.uuid || index}>{columns.map((column) => <td key={column} title={String(displayCellValue(row, column) ?? '')}>{editable && ['quantity', 'price'].includes(column) ? <input className="cell-input" type="number" value={row[column]} onChange={(e) => editable(row, column, e.target.value)} /> : editable && column === 'selected_unit' && row.packaging_options?.length ? <select className="cell-input" value={row.selected_unit_key || row.packaging_options[0].key} onChange={(e) => editable(row, column, e.target.value)}>{row.packaging_options.map((unit) => <option key={unit.key} value={unit.key}>{unit.label}</option>)}</select> : format(row[column], column, row)}</td>)}{actions && <td className="actions-cell"><div className="row-actions">{actions(row)}</div></td>}</tr>) : <tr><td colSpan={columns.length + (actions ? 1 : 0)}><EmptyRows onAdd={onAdd} /></td></tr>}</tbody></table></div><div className="table-footer"><span>Showing {start}-{end} of {total} records</span><div className="pagination"><button className="ghost-btn" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>Previous</button><span>Page {safePage} / {pages}</span><button className="ghost-btn" disabled={safePage >= pages} onClick={() => setPage(safePage + 1)}>Next</button></div></div></div>;
 }
 
 function List({ title, rows, cols }) {
@@ -2760,11 +2897,13 @@ function money(value) {
 }
 
 function displayCellValue(row = {}, key) {
+  if (key === 'selected_unit') return row.selected_unit_label || row.selected_unit;
   return key === 'product_name' ? productDisplayName(row) : row[key];
 }
 
 function format(value, key, row = {}) {
-  if (key === 'product_name') return productDisplayName(row);
+  if (key === 'product_name') return saleLineDisplayName(row);
+  if (key === 'selected_unit') return row.selected_unit_label || value || '';
   if (key === 'imei_numbers') return imeiListText({ imei_numbers: value });
   if (key === 'status') return <span className={`status-tag ${statusClass(value)}`}>{String(value ?? '')}</span>;
   if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'registration_fee', 'doctor_fee', 'medicine_charges', 'injection_charges', 'lab_charges', 'radiology_charges', 'procedure_charges', 'grand_total', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent', 'available', 'cash_in', 'sent', 'pending', 'fee_profit', 'mrp'].includes(key)) return money(value);
@@ -2805,7 +2944,8 @@ function printTable(title, rows, columns, brand = window.__msmBrand || {}) {
 }
 
 function printableFormat(value, key, row = {}) {
-  if (key === 'product_name') return productDisplayName(row);
+  if (key === 'product_name') return saleLineDisplayName(row);
+  if (key === 'selected_unit') return row.selected_unit_label || value || '';
   if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'registration_fee', 'doctor_fee', 'medicine_charges', 'injection_charges', 'lab_charges', 'radiology_charges', 'procedure_charges', 'grand_total', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent', 'available', 'cash_in', 'sent', 'pending', 'fee_profit', 'mrp'].includes(key)) return money(value);
   if (String(key).includes('_at') && value) return new Date(value).toLocaleString();
   if (['visit_date', 'next_visit', 'delivery_date', 'expiry_date', 'due_date'].includes(key) && value) return new Date(value).toLocaleDateString();
@@ -2813,7 +2953,7 @@ function printableFormat(value, key, row = {}) {
 }
 
 function legacyPrintInvoice(sale, cart, brand = window.__msmBrand || {}) {
-  const html = `<div class="brand">${shopDisplayName(brand)}</div><h2>Invoice ${sale.invoice_number}</h2><p>${sale.customer_name} - ${new Date(sale.sold_at).toLocaleString()}</p><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.map((item) => `<tr><td>${productDisplayName(item)}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('')}</tbody></table><h3 class="right">Total: ${money(sale.total)}</h3><p>Paid: ${money(sale.paid)} | Balance: ${money(sale.balance)}</p>`;
+  const html = `<div class="brand">${shopDisplayName(brand)}</div><h2>Invoice ${sale.invoice_number}</h2><p>${sale.customer_name} - ${new Date(sale.sold_at).toLocaleString()}</p><table><thead><tr><th>Item</th><th>Qty</th><th>Rate</th></tr></thead><tbody>${cart.map((item) => `<tr><td>${saleLineDisplayName(item)}</td><td>${lineQuantityLabel(item)}</td><td>${money(item.price)}</td></tr>`).join('')}</tbody></table><h3 class="right">Total: ${money(sale.total)}</h3><p>Paid: ${money(sale.paid)} | Balance: ${money(sale.balance)}</p>`;
   printHtml(`Invoice ${sale.invoice_number}`, html);
 }
 
@@ -2884,7 +3024,7 @@ function printInvoice(sale, cart = [], brand = {}, format = 'a4') {
   const settlement = payment.changeReturn > 0
     ? `<p><strong>Change Return:</strong> ${money(payment.changeReturn)}</p>`
     : `<p><strong>Due Amount:</strong> ${money(payment.dueAmount)}</p>`;
-  const html = `<section class="receipt-shell ${receiptFormatClass(format)}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p><strong>Invoice Number:</strong> ${sale.invoice_number || ''}</p><p><strong>Customer:</strong> ${sale.customer_name || 'Walk-in Customer'}</p><p><strong>Date:</strong> ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>IMEI / Serial</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${productDisplayName(item)}</td><td>${imeiListText(item)}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('') : `<tr><td colspan="4">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Grand Total: ${money(payment.total)}</h3><p><strong>Payment Method:</strong> ${payment.method}</p><p><strong>Paid Amount:</strong> ${money(payment.paid)}</p>${settlement}<p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
+  const html = `<section class="receipt-shell ${receiptFormatClass(format)}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p><strong>Invoice Number:</strong> ${sale.invoice_number || ''}</p><p><strong>Customer:</strong> ${sale.customer_name || 'Walk-in Customer'}</p><p><strong>Date:</strong> ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>IMEI / Serial</th><th>Qty</th><th>Rate</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${saleLineDisplayName(item)}</td><td>${imeiListText(item)}</td><td>${lineQuantityLabel(item)}</td><td>${money(item.price)}</td></tr>`).join('') : `<tr><td colspan="4">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Grand Total: ${money(payment.total)}</h3><p><strong>Payment Method:</strong> ${payment.method}</p><p><strong>Paid Amount:</strong> ${money(payment.paid)}</p>${settlement}<p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
   printHtml(`Invoice ${sale.invoice_number}`, html);
 }
 
@@ -2925,7 +3065,7 @@ function invoicePdfLines(invoice, cart, brand = {}) {
     brand?.contact_number || '',
     `Invoice Number: ${invoice.invoice_number}`,
     `Customer Name: ${invoice.customer_name || 'Walk-in Customer'}`,
-    ...cart.map((item) => `${productDisplayName(item)} x ${item.quantity} - ${money(Number(item.quantity) * Number(item.price))}${imeiListText(item) ? ` | IMEI: ${imeiListText(item)}` : ''}`),
+    ...cart.map((item) => `${saleLineDisplayName(item)} x ${lineQuantityLabel(item)} @ ${money(item.price)} - ${money(Number(item.quantity) * Number(item.price))}${imeiListText(item) ? ` | IMEI: ${imeiListText(item)}` : ''}`),
     `Subtotal: ${money(invoice.subtotal)}`,
     `Discount: ${money(invoice.discount)}`,
     `Tax: ${money(invoice.tax)}`,
@@ -2941,7 +3081,7 @@ function invoiceMessage(invoice, brand = {}, cart = []) {
   const payment = paymentDisplay(invoice);
   const items = cart.length ? `\nItems:\n${cart.map((item) => {
     const imei = imeiListText(item);
-    return `- ${productDisplayName(item)} x ${item.quantity || 1} @ ${money(item.price || 0)}${imei ? `\n  IMEI: ${imei}` : ''}`;
+    return `- ${saleLineDisplayName(item)} x ${lineQuantityLabel(item)} @ ${money(item.price || 0)}${imei ? `\n  IMEI: ${imei}` : ''}`;
   }).join('\n')}` : '';
   const status = invoice.status || (payment.dueAmount > 0 ? 'Credit Due' : 'Paid');
   const settlement = payment.changeReturn > 0 ? `Change Return: ${money(payment.changeReturn)}` : `Due Amount: ${money(payment.dueAmount)}`;

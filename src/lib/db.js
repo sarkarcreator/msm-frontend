@@ -676,7 +676,8 @@ export async function createSale({ customer_uuid, payment_type, discount, tax, p
   const balance = Math.max(0, total - paidAmount);
   const profit = cart.reduce((sum, item) => {
     const product = productMap.get(item.product_uuid);
-    return sum + (Number(item.price) - Number(product?.purchase_price || 0)) * Number(item.quantity);
+    const stockQuantity = Number(item.stock_quantity || item.quantity || 0);
+    return sum + (Number(item.price) * Number(item.quantity || 0)) - (Number(product?.purchase_price || 0) * stockQuantity);
   }, 0) - Number(discount || 0);
   const now = new Date().toISOString();
   const sale = await saveRecord('sales', {
@@ -699,24 +700,33 @@ export async function createSale({ customer_uuid, payment_type, discount, tax, p
   for (const item of cart) {
     const product = productMap.get(item.product_uuid);
     if (!product) continue;
+    const stockQuantity = Math.max(1, Number(item.stock_quantity || item.quantity || 1));
     await saveRecord('sale_items', {
       sale_uuid: sale.uuid,
       product_uuid: product.uuid,
-      product_name: product.product_name,
+      product_name: item.product_name || product.product_name,
       imei: item.imei || product.imei,
       quantity: Number(item.quantity),
+      stock_quantity: stockQuantity,
+      selected_unit: item.selected_unit,
+      selected_unit_label: item.selected_unit_label,
+      conversion_factor: Number(item.conversion_factor || 1),
+      unit_barcode: item.unit_barcode,
       price: Number(item.price),
-      profit: (Number(item.price) - Number(product.purchase_price || 0)) * Number(item.quantity),
+      profit: (Number(item.price) * Number(item.quantity)) - (Number(product.purchase_price || 0) * stockQuantity),
     });
     await saveRecord('products', {
       ...product,
-      quantity: Math.max(0, Number(product.quantity || 0) - Number(item.quantity || 0)),
+      quantity: Math.max(0, Number(product.quantity || 0) - stockQuantity),
     });
     await saveRecord('inventory_transactions', {
       product_uuid: product.uuid,
       product_name: product.product_name,
       type: 'Stock Out',
-      quantity: -Number(item.quantity),
+      quantity: -stockQuantity,
+      selected_unit: item.selected_unit,
+      selected_unit_label: item.selected_unit_label,
+      conversion_factor: Number(item.conversion_factor || 1),
       reference: sale.invoice_number,
       reason: 'Sale',
       transacted_at: now,
@@ -1146,17 +1156,21 @@ export async function createPurchase({ supplier_uuid, invoice_number, cart, paid
   for (const item of cart) {
     await saveRecord('purchase_items', { ...item, purchase_uuid: purchase.uuid });
     const product = item.product_uuid ? await getRecord('products', item.product_uuid) : null;
+    const stockQuantity = Math.max(1, Number(item.stock_quantity || item.quantity || 1));
     if (product) {
       await saveRecord('products', {
         ...product,
         purchase_price: Number(item.cost_price),
-        quantity: Number(product.quantity || 0) + Number(item.quantity || 0),
+        quantity: Number(product.quantity || 0) + stockQuantity,
       });
       await saveRecord('inventory_transactions', {
         product_uuid: product.uuid,
         product_name: product.product_name,
         type: 'Stock In',
-        quantity: Number(item.quantity),
+        quantity: stockQuantity,
+        selected_unit: item.selected_unit,
+        selected_unit_label: item.selected_unit_label,
+        conversion_factor: Number(item.conversion_factor || 1),
         reference: purchase.invoice_number,
         reason: 'Purchase',
         transacted_at: new Date().toISOString(),
@@ -1993,7 +2007,7 @@ async function supplierName(uuid) {
 }
 
 function normalizeNumbers(data) {
-  const numberFields = new Set(['quantity', 'package_quantity', 'units_per_package', 'loose_quantity', 'low_stock_threshold', 'medicine_days', 'age']);
+  const numberFields = new Set(['quantity', 'stock_quantity', 'conversion_factor', 'package_quantity', 'units_per_package', 'loose_quantity', 'low_stock_threshold', 'medicine_days', 'age']);
   return Object.fromEntries(Object.entries(data).map(([key, value]) => [key, MONEY_FIELDS.has(key) || numberFields.has(key) ? Number(value || 0) : value]));
 }
 
