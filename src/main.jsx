@@ -78,7 +78,7 @@ const PHARMACY_MODULES = new Set(['dashboard', 'pos', 'sales', 'products', 'cust
 const TRADERS_MODULES = new Set(['dashboard', 'pos', 'sales', 'products', 'traderCompanies', 'traderBrands', 'traderTerritories', 'traderRoutes', 'traderSalesmen', 'traderRetailers', 'traderChallans', 'traderRecoveries', 'traderSalesmanLedger', 'traderDistributorLedger', 'purchases', 'suppliers', 'expenses', 'reports', 'catalog', 'backup', 'users']);
 const GENERAL_STORE_CATEGORIES = ['Beverages', 'Water', 'Juices', 'Biscuits', 'Snacks', 'Dairy', 'Grocery', 'Confectionery', 'Personal Care', 'Household'];
 const TRADERS_CATEGORIES = ['Beverages', 'Water', 'Juices', 'Biscuits', 'Snacks', 'Dairy', 'Grocery', 'Confectionery', 'Personal Care', 'Household', 'Company Stock'];
-const RETAIL_UNITS = ['Single Unit', 'Half Carton', 'Carton', 'Box', 'Pack', 'Dozen', 'Bag', 'Bottle', 'pcs', 'kg', 'gram', 'liter', 'meter'];
+const RETAIL_UNITS = ['Single Unit', 'Piece', 'Bottle', 'Pack', 'Pet', 'Box', 'Carton', 'Tray', 'Case', 'Dozen', 'Bag', 'Tablet', 'Strip', 'Kg', 'Gram', 'Liter', 'ML', 'Half Carton', 'pcs', 'kg', 'gram', 'liter', 'meter'];
 
 const ROLE_MODULES = {
   'Super Admin': ['dashboard', 'licenses', 'users', 'settings', 'backup', 'reports', 'notifications'],
@@ -183,7 +183,7 @@ const RESOURCES = {
     title: 'Inventory Management',
     store: 'products',
     search: ['display_name', 'product_name', 'category', 'brand', 'model', 'pack_size', 'unit', 'variant_type', 'sku', 'product_code', 'imei', 'imei_numbers', 'barcode', 'secondary_barcode', 'qr_code', 'box_barcode', 'carton_barcode', 'batch_number', 'status'],
-    columns: ['product_name', 'category', 'brand', 'imei_numbers', 'unit', 'package_quantity', 'units_per_package', 'quantity', 'purchase_price', 'package_cost_price', 'total_cost', 'sale_price', 'low_stock_threshold', 'status'],
+    columns: ['product_name', 'category', 'brand', 'imei_numbers', 'unit', 'package_quantity', 'units_per_package', 'quantity', 'packaging_view', 'purchase_price', 'package_cost_price', 'total_cost', 'sale_price', 'low_stock_threshold', 'status'],
     rowMap: inventoryRows,
     fields: [
       ['product_name', 'Product Name', 'text', true], ['category', 'Category', 'select', true, ['General', ...TRADERS_CATEGORIES, 'Pharmacy', 'Electronics', 'Clothing', 'Hardware', 'Accessories', 'Spare Parts']], ['company_name', 'Company Name'], ['company_uuid', 'Company UUID'], ['brand', 'Brand'], ['model', 'Model'],
@@ -519,6 +519,7 @@ const HEADER_LABELS = {
   loose_quantity: 'Loose Pcs',
   package_cost_price: 'Cost Per Box',
   total_cost: 'Total Cost',
+  packaging_view: 'Packaging View',
   selected_unit: 'Selling Unit',
   stock_quantity: 'Stock Qty',
   conversion_factor: 'Contains',
@@ -836,6 +837,7 @@ function inventoryRows(rows) {
     return {
       ...row,
       display_name: productDisplayName(row),
+      packaging_view: stockPackagingView(row),
       imei: row.imei || row.barcode || row.serial || '',
       status: qty <= 0 ? 'Out of Stock' : qty <= threshold ? 'Low Stock' : 'In Stock',
     };
@@ -883,7 +885,12 @@ function saleLineDisplayName(record = {}) {
 
 function lineQuantityLabel(item = {}) {
   const quantity = Number(item.quantity || 0);
-  return `${quantity} ${item.selected_unit || item.selling_unit || ''}`.trim();
+  const unit = quantity === 1 ? (item.selected_unit || item.selling_unit || '') : pluralUnit(item.selected_unit || item.selling_unit || '');
+  return `${quantity} ${unit}`.trim();
+}
+
+function lineStockQuantity(item = {}) {
+  return Math.max(1, Number(item.stock_quantity || 0) || (Number(item.quantity || 1) * Number(item.conversion_factor || 1)));
 }
 
 function packagingUnits(product = {}) {
@@ -977,12 +984,40 @@ function pluralUnit(unit = 'Piece') {
 function unitForMatch(product = {}, match = {}) {
   const units = packagingUnits(product);
   const type = String(match.match_type || '').toLowerCase();
+  if (match.packaging_unit?.key) {
+    const matchedUnit = units.find((unit) => unit.key === match.packaging_unit.key || unit.barcode === match.packaging_unit.barcode);
+    if (matchedUnit) return matchedUnit;
+  }
   const matched = units.find((unit) => {
     if (type.includes(unit.key)) return true;
     if (unit.barcode && normalizeScanValue(unit.barcode) === normalizeScanValue(match.scan)) return true;
     return false;
   });
   return matched || units[0];
+}
+
+function stockPackagingBreakdown(product = {}) {
+  const total = Math.max(0, Math.floor(Number(product.quantity || 0)));
+  const units = packagingUnits(product).filter((unit) => Number(unit.factor || 1) > 1).sort((a, b) => Number(b.factor || 1) - Number(a.factor || 1));
+  if (!units.length || total === 0) return { base: total, text: `${total} ${pluralUnit(product.unit || product.variant_type || 'Piece')}` };
+  let remaining = total;
+  const parts = [];
+  for (const unit of units) {
+    const factor = Math.max(1, Number(unit.factor || 1));
+    const count = Math.floor(remaining / factor);
+    if (count > 0) {
+      parts.push(`${count} ${pluralUnit(unit.unit || unit.label)}`);
+      remaining -= count * factor;
+    }
+  }
+  if (remaining > 0) parts.push(`${remaining} ${pluralUnit(product.unit || product.variant_type || 'Piece')}`);
+  return { base: total, text: parts.join(' ') || `${total} ${pluralUnit(product.unit || product.variant_type || 'Piece')}` };
+}
+
+function stockPackagingView(product = {}) {
+  const breakdown = stockPackagingBreakdown(product);
+  const baseUnit = product.unit || product.variant_type || 'Piece';
+  return `${breakdown.base} ${pluralUnit(baseUnit)} | ${breakdown.text}`;
 }
 
 function normalizeScanValue(value) {
@@ -1674,7 +1709,7 @@ function lookupMeta(match = {}) {
   const catalog = match.catalog || {};
   const stock = product.uuid ? `Stock ${product.quantity ?? 0}` : medicine.uuid ? `Stock ${medicine.quantity ?? medicine.stock ?? 0}` : '';
   const price = product.uuid ? money(product.sale_price || 0) : medicine.uuid ? money(medicine.sale_price || medicine.mrp || 0) : money(catalog.default_price || 0);
-  const pack = product.pack_size || medicine.pack_size || catalog.pack_size || product.unit || catalog.unit || '';
+  const pack = match.packaging_unit?.label || product.pack_size || medicine.pack_size || catalog.pack_size || product.unit || catalog.unit || '';
   return [match.match_type, product.brand || medicine.manufacturer || catalog.brand, product.category || medicine.category || catalog.category, pack, stock, price].filter(Boolean).join(' - ');
 }
 
@@ -2027,16 +2062,49 @@ function Purchases({ data, refresh }) {
     setCart((current) => {
       const existing = current.find((row) => row.cart_key === cartKey);
       if (!existing) return [...current, { ...item, cart_key: cartKey }];
-      return current.map((row) => row.cart_key === cartKey ? { ...row, quantity: Number(row.quantity || 0) + Number(item.quantity || 1), cost_price: item.cost_price || row.cost_price } : row);
+      return current.map((row) => row.cart_key === cartKey ? { ...row, quantity: Number(row.quantity || 0) + Number(item.quantity || 1), stock_quantity: Number(row.stock_quantity || 0) + lineStockQuantity(item), cost_price: item.cost_price || row.cost_price } : row);
     });
   }
   return <div className="stack"><section className="panel"><ModuleHeader title="Purchase Management" query={query} setQuery={setQuery} onAdd={() => setCreating(true)} onExport={() => exportCsv('purchases.csv', filtered)} onPrint={() => printTable('Purchases', filtered, ['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status'])} /><DataTable rows={filtered} columns={['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status']} onAdd={() => setCreating(true)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => printPurchaseReceipt(row)}><Printer size={15} /> Receipt</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Purchase Detail" row={viewing} columns={['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status', 'purchased_at']} onClose={() => setViewing(null)} />}{creating && <ModalShell onClose={closeCreate}><form onSubmit={submit}><div className="modal-header"><h2>Add Purchase</h2><button type="button" className="icon-btn" onClick={closeCreate} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Supplier<select value={form.supplier_uuid} onChange={(e) => setForm({ ...form, supplier_uuid: e.target.value })}><option value="">Select supplier</option>{(data.suppliers || []).map((supplier) => <option key={supplier.uuid} value={supplier.uuid}>{supplier.supplier_name}</option>)}</select></label><label>Invoice Number<input value={form.invoice_number} onChange={(e) => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Paid<input type="number" value={form.paid} onChange={(e) => setForm({ ...form, paid: e.target.value })} /></label></div><ProductLine products={data.products || []} data={data} onAdd={addPurchaseLine} /><DataTable rows={cart} columns={['product_name', 'selected_unit', 'stock_quantity', 'quantity', 'cost_price']} actions={(row) => <button type="button" className="danger-btn" onClick={() => setCart(cart.filter((item) => item.cart_key !== row.cart_key))}><Trash2 size={15} /></button>} /><div className="totals"><strong>Total {money(total)}</strong></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={closeCreate}>Cancel</button><button className="primary-btn" disabled={!cart.length}>Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="purchases" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function ProductLine({ products, onAdd, data }) {
-  const [line, setLine] = useState({ product_uuid: '', quantity: 1, cost_price: 0, imei_numbers: '' });
+  const [line, setLine] = useState({ product_uuid: '', quantity: 1, cost_price: 0, imei_numbers: '', selected_unit_key: 'base' });
   const [scan, setScan] = useState('');
   const product = products.find((item) => item.uuid === line.product_uuid);
+  const units = product ? packagingUnits(product) : [];
+  const selectedUnit = units.find((unit) => unit.key === line.selected_unit_key) || units[0];
+  const manualQuantity = Math.max(1, Number(line.quantity || 1));
+  const manualStockQuantity = manualQuantity * Number(selectedUnit?.factor || 1);
+
+  function selectProduct(uuid) {
+    const nextProduct = products.find((item) => item.uuid === uuid);
+    const unit = nextProduct ? packagingUnits(nextProduct)[0] : null;
+    setLine({
+      ...line,
+      product_uuid: uuid,
+      selected_unit_key: unit?.key || 'base',
+      cost_price: unit?.purchase_price || nextProduct?.purchase_price || 0,
+    });
+  }
+
+  function addManualProduct() {
+    if (!product || !selectedUnit) return;
+    onAdd({
+      ...line,
+      quantity: manualQuantity,
+      cart_key: `${line.product_uuid}:${selectedUnit.key}:${line.imei_numbers || 'manual'}`,
+      product_name: productDisplayName(product),
+      stock_quantity: manualStockQuantity,
+      selected_unit_key: selectedUnit.key,
+      selected_unit: selectedUnit.unit,
+      selected_unit_label: selectedUnit.label,
+      conversion_factor: selectedUnit.factor,
+      unit_barcode: selectedUnit.barcode,
+      cost_price: Number(line.cost_price || selectedUnit.purchase_price || product.purchase_price || 0),
+    });
+  }
+
   function addScannedProduct(match) {
     try {
       if (!match.product?.uuid) {
@@ -2063,7 +2131,10 @@ function ProductLine({ products, onAdd, data }) {
       notify(error.message || 'Purchase scan failed');
     }
   }
-  return <div className="stack compact"><UniversalProductLookup value={scan} data={data || { products }} onChange={setScan} onPick={addScannedProduct} /><div className="inline-form"><select value={line.product_uuid} onChange={(e) => setLine({ ...line, product_uuid: e.target.value })}><option value="">Product</option>{products.map((item) => <option key={item.uuid} value={item.uuid}>{productDisplayName(item)}</option>)}</select><input type="number" value={line.quantity} onChange={(e) => setLine({ ...line, quantity: e.target.value })} /><input type="number" value={line.cost_price} onChange={(e) => setLine({ ...line, cost_price: e.target.value })} /><input placeholder="IMEI numbers" value={line.imei_numbers} onChange={(e) => setLine({ ...line, imei_numbers: e.target.value })} /><button type="button" className="ghost-btn" onClick={() => product && onAdd({ ...line, cart_key: `${line.product_uuid}:${line.imei_numbers || 'manual'}`, product_name: productDisplayName(product), stock_quantity: Number(line.quantity || 1), selected_unit: packagingUnits(product)[0]?.unit, selected_unit_label: packagingUnits(product)[0]?.label, conversion_factor: 1 })}><Plus size={15} /> Add</button></div></div>;
+  return <div className="stack compact"><UniversalProductLookup value={scan} data={data || { products }} onChange={setScan} onPick={addScannedProduct} /><div className="inline-form"><select value={line.product_uuid} onChange={(e) => selectProduct(e.target.value)}><option value="">Product</option>{products.map((item) => <option key={item.uuid} value={item.uuid}>{productDisplayName(item)}</option>)}</select><select value={selectedUnit?.key || 'base'} disabled={!units.length} onChange={(e) => {
+    const unit = units.find((item) => item.key === e.target.value) || units[0];
+    setLine({ ...line, selected_unit_key: unit?.key || 'base', cost_price: unit?.purchase_price || line.cost_price });
+  }}>{units.map((unit) => <option key={unit.key} value={unit.key}>{unit.label}</option>)}</select><input type="number" min="1" value={line.quantity} onChange={(e) => setLine({ ...line, quantity: e.target.value })} /><input type="number" value={line.cost_price} onChange={(e) => setLine({ ...line, cost_price: e.target.value })} /><input placeholder="IMEI numbers" value={line.imei_numbers} onChange={(e) => setLine({ ...line, imei_numbers: e.target.value })} /><span className="shortcut-pill">Stock +{manualStockQuantity || 0}</span><button type="button" className="ghost-btn" onClick={addManualProduct} disabled={!product}><Plus size={15} /> Add</button></div></div>;
 }
 
 function Notifications({ data, refresh, auth }) {

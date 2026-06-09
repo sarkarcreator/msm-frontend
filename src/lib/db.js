@@ -494,6 +494,10 @@ export async function receiveInventoryByScan({ scan, product_uuid, quantity = 1,
     product_name: product.product_name,
     type: 'Stock In',
     quantity: finalQuantity,
+    selected_unit: lookup.packaging_unit?.unit,
+    selected_unit_label: lookup.packaging_unit?.label,
+    conversion_factor: lookup.packaging_unit?.factor,
+    unit_barcode: lookup.packaging_unit?.barcode,
     reference: reference || 'BARCODE-RECEIVE',
     reason: reason || 'Barcode Receiving',
     transacted_at: new Date().toISOString(),
@@ -559,6 +563,18 @@ async function localBarcodeLookup(scan, data = null, options = {}) {
     if (product) return withLocalResults({ match_type: field, scan, product, imei: null, quantity_multiplier: localQuantityMultiplier(field, product) }, term, products, imeis, options);
   }
 
+  const packagingMatch = findLocalPackagingMatch(products, term);
+  if (packagingMatch) {
+    return withLocalResults({
+      match_type: `packaging:${packagingMatch.unit.key}`,
+      scan,
+      product: packagingMatch.product,
+      imei: null,
+      packaging_unit: packagingMatch.unit,
+      quantity_multiplier: packagingMatch.unit.factor,
+    }, term, products, imeis, options);
+  }
+
   const imei = imeis.find((row) => [row.imei_1, row.imei_2, row.serial_number, ...(normalizeImeiList(row.imei_numbers || []))]
     .some((value) => exact(value)));
   if (imei) {
@@ -598,6 +614,9 @@ function withLocalResults(payload, term, products, imeis, options = {}) {
   for (const field of ['barcode', 'secondary_barcode', 'qr_code', 'sku', 'product_code', 'box_barcode', 'carton_barcode']) {
     products.filter((row) => normalizeScan(row[field]).toLowerCase() === term.toLowerCase()).forEach((product) => add(field, product, null, localQuantityMultiplier(field, product)));
   }
+  products.forEach((product) => localPackagingUnits(product)
+    .filter((unit) => normalizeScan(unit.barcode).toLowerCase() === term.toLowerCase())
+    .forEach((unit) => add(`packaging:${unit.key}`, product, null, unit.factor)));
   imeis.filter((row) => [row.imei_1, row.imei_2, row.serial_number, ...(normalizeImeiList(row.imei_numbers || []))]
     .some((value) => normalizeScan(value).toLowerCase() === term.toLowerCase()))
     .forEach((imei) => add('imei', products.find((row) => row.uuid === imei.product_uuid), imei, 1));
@@ -614,6 +633,60 @@ function localQuantityMultiplier(field, row = {}) {
   if (field === 'carton_barcode') return Math.max(1, Number(row.units_per_carton || row.units_per_package || 1));
   if (field === 'box_barcode') return Math.max(1, Number(row.units_per_box || row.units_per_package || 1));
   return 1;
+}
+
+function findLocalPackagingMatch(products = [], term = '') {
+  for (const product of products) {
+    const unit = localPackagingUnits(product).find((item) => item.barcode && normalizeScan(item.barcode).toLowerCase() === term.toLowerCase());
+    if (unit) return { product, unit };
+  }
+  return null;
+}
+
+function localPackagingUnits(product = {}) {
+  const baseUnit = product.unit && !['Single Unit', 'Unit'].includes(product.unit) ? product.unit : product.variant_type || 'Piece';
+  const parsed = parseLocalPackagingUnits(product.packaging_units);
+  const rows = parsed.map((unit, index) => ({
+    ...unit,
+    key: String(unit.key || unit.unit || unit.label || `level_${index + 1}`).toLowerCase().replaceAll(' ', '_'),
+    parent_key: String(unit.parent_key || unit.parent || unit.contains_unit || 'base').toLowerCase().replaceAll(' ', '_'),
+    conversion_quantity: Math.max(1, Number(unit.conversion_quantity || unit.contains || unit.factor || unit.conversion_factor || 1)),
+  }));
+  const byKey = new Map(rows.map((row) => [row.key, row]));
+  const factorFor = (row, seen = new Set()) => {
+    if (!row || row.key === 'base' || seen.has(row.key)) return 1;
+    seen.add(row.key);
+    const parentFactor = row.parent_key === 'base' ? 1 : factorFor(byKey.get(row.parent_key), seen);
+    return Math.max(1, Number(row.conversion_quantity || 1)) * parentFactor;
+  };
+  const jsonUnits = rows.map((row) => ({
+    key: row.key,
+    unit: row.unit || row.label || row.key,
+    label: row.label || `${row.unit || row.label || row.key} (${factorFor(row)} ${pluralLocalUnit(baseUnit)})`,
+    barcode: row.barcode || row.code || '',
+    factor: factorFor(row),
+  }));
+  return [
+    ...jsonUnits,
+    product.box_barcode || product.units_per_box ? { key: 'box', unit: 'Box', label: `Box (${Math.max(1, Number(product.units_per_box || product.units_per_package || 1))} ${pluralLocalUnit(baseUnit)})`, barcode: product.box_barcode || '', factor: Math.max(1, Number(product.units_per_box || product.units_per_package || 1)) } : null,
+    product.carton_barcode || product.units_per_carton ? { key: 'carton', unit: 'Carton', label: `Carton (${Math.max(1, Number(product.units_per_carton || product.units_per_package || 1))} ${pluralLocalUnit(baseUnit)})`, barcode: product.carton_barcode || '', factor: Math.max(1, Number(product.units_per_carton || product.units_per_package || 1)) } : null,
+  ].filter(Boolean);
+}
+
+function parseLocalPackagingUnits(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function pluralLocalUnit(unit = 'Piece') {
+  const text = String(unit || 'Piece').replace(/\s*\(.*/, '');
+  return text.toLowerCase().endsWith('s') ? text : `${text}s`;
 }
 
 async function deletePatientWorkflowLocally(db, patientUuid, mode = 'soft') {
