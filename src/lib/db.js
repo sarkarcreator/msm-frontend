@@ -108,7 +108,7 @@ export async function cleanupStartupData() {
   const db = await database();
   const plans = [
     ['customers', (row) => row.phone || row.cnic || row.uuid],
-    ['products', (row) => row.imei || row.barcode || `${row.product_name || ''}-${row.model || ''}` || row.uuid],
+    ['products', productDedupeKey],
     ['repairs', (row) => row.job_number || `${row.imei || ''}-${row.customer_name || ''}` || row.uuid],
     ['sales', (row) => row.invoice_number || row.uuid],
     ['licenses', (row) => row.license_key || row.activation_code || `${row.owner_name || ''}-${row.device_id || ''}-${row.type || ''}` || row.uuid],
@@ -515,6 +515,35 @@ async function cacheBarcodeLookup(payload = {}) {
   if (payload.catalog?.uuid) {
     await db.put('master_catalogs', normalizeNumbers(scopeRecordForSave('master_catalogs', { ...payload.catalog, sync_status: 'synced' })));
   }
+}
+
+function productDedupeKey(row = {}) {
+  const direct = [
+    row.imei,
+    row.imei_1,
+    row.barcode,
+    row.secondary_barcode,
+    row.qr_code,
+    row.box_barcode,
+    row.carton_barcode,
+    row.sku,
+    row.product_code,
+  ].find((value) => String(value || '').trim());
+  if (direct) return direct;
+
+  const variantKey = [
+    row.product_name || row.name,
+    row.brand,
+    row.category,
+    row.model,
+    row.pack_size,
+    row.unit,
+    row.variant_type,
+    row.units_per_package,
+    row.sale_price,
+  ].map((value) => String(value || '').trim().toLowerCase()).join('|');
+
+  return variantKey.replaceAll('|', '') ? variantKey : row.uuid;
 }
 
 async function localBarcodeLookup(scan, data = null, options = {}) {

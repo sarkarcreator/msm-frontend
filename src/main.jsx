@@ -1150,9 +1150,7 @@ function CatalogModule({ rows, products, brand, refresh }) {
 
   async function addToInventory(row) {
     const productName = row.product_name || row.name;
-    const exists = products.some((product) => String(product.product_name || '').toLowerCase() === String(productName || '').toLowerCase());
-    if (exists) return notify('This item already exists in inventory');
-    const product = await saveRecord('products', calculatedProduct({
+    const candidate = calculatedProduct({
       product_name: productName,
       category: row.category || categoriesForBusiness(brand)[0],
       brand: row.brand || '',
@@ -1167,9 +1165,14 @@ function CatalogModule({ rows, products, brand, refresh }) {
       purchase_price: Number(row.default_cost || 0),
       sale_price: Number(row.default_price || 0),
       low_stock_threshold: 3,
-    }));
+    });
+    const exists = products.some((product) => productVariantIdentity(product) === productVariantIdentity(candidate));
+    if (exists) return notify('This item already exists in inventory');
+    const product = await saveRecord('products', candidate);
+    window.dispatchEvent(new CustomEvent('msm:product-saved', { detail: product }));
     runInBackground(() => saveRemoteRecord('products', product), 'Inventory synced in background');
     await refresh();
+    await auditProductHydration(product);
     notify('Catalog item added to inventory');
   }
 
@@ -1301,9 +1304,11 @@ function Inventory({ rows, brand, refresh }) {
       return;
     }
     const product = await saveRecord('products', calculatedProduct(editing));
+    window.dispatchEvent(new CustomEvent('msm:product-saved', { detail: product }));
     runInBackground(() => saveRemoteRecord('products', product), 'Inventory synced in background');
     setEditing(null);
     await refresh();
+    await auditProductHydration(product);
     notify('Product saved successfully');
   }
 
@@ -1365,6 +1370,51 @@ function calculatedProduct(record) {
     package_cost_price: purchasePrice * unitsPerPackage,
     total_cost: purchasePrice * quantity,
   };
+}
+
+function productVariantIdentity(record = {}) {
+  const direct = [
+    record.barcode,
+    record.secondary_barcode,
+    record.qr_code,
+    record.box_barcode,
+    record.carton_barcode,
+    record.sku,
+    record.product_code,
+    record.imei,
+  ].find((value) => String(value || '').trim());
+  if (direct) return String(direct).trim().toLowerCase();
+  return [
+    record.product_name || record.name,
+    record.brand,
+    record.category,
+    record.model,
+    record.pack_size,
+    record.unit,
+    record.variant_type,
+    record.units_per_package,
+    record.sale_price,
+  ].map((value) => String(value || '').trim().toLowerCase()).join('|');
+}
+
+async function auditProductHydration(product) {
+  const products = await listRecords('products');
+  const visible = products.some((row) => row.uuid === product.uuid);
+  if (visible) return true;
+  const payload = {
+    uuid: crypto.randomUUID(),
+    action: 'product_hydration_miss',
+    entity: 'products',
+    entity_uuid: product.uuid,
+    details: 'Product saved successfully but was not visible after inventory hydration.',
+    metadata: product,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  console.warn('Product save succeeded but inventory hydration missed record', payload);
+  await saveRecord('audit_logs', payload);
+  window.dispatchEvent(new CustomEvent('msm:product-hydration-miss', { detail: product }));
+  return false;
 }
 
 function duplicateProductBarcode(rows = [], record = {}) {
@@ -1497,7 +1547,7 @@ function POS2({ data, brand, refresh }) {
   const paid = payment.payment_type === 'credit' ? 0 : Number(payment.paid === '' ? total : payment.paid || total);
   const changeReturn = Math.max(0, paid - total);
   const dueAmount = Math.max(0, total - paid);
-  const draftInvoice = { invoice_number: 'DRAFT', customer_name: customer?.name || quick.name || 'Walk-in Customer', subtotal, discount: payment.discount, tax: payment.tax, total, paid, balance: dueAmount, sold_at: new Date().toISOString() };
+  const draftInvoice = invoiceWithPaymentMeta({ invoice_number: 'DRAFT', customer_name: customer?.name || quick.name || 'Walk-in Customer', subtotal, discount: payment.discount, tax: payment.tax, total, paid, sold_at: new Date().toISOString() }, payment);
   const usesImeiTracking = businessTypeKey(brand?.business_type) === 'mobile_shop';
 
   function addToCart(product, match = {}) {
@@ -1532,10 +1582,11 @@ function POS2({ data, brand, refresh }) {
   async function completeSale() {
     const retailer = isTraders ? customer : null;
     const sale = await createSale({ ...payment, paid, retailer_uuid: retailer?.uuid || payment.customer_uuid, retailer_name: retailer?.shop_name || retailer?.name, route_uuid: retailer?.route_uuid, route_name: retailer?.route_name, territory_uuid: retailer?.territory_uuid, territory_name: retailer?.territory_name, cart });
+    const printableSale = invoiceWithPaymentMeta({ ...sale, customer_name: sale.customer_name || customer?.name || quick.name || 'Walk-in Customer', subtotal, discount: payment.discount, tax: payment.tax, total: sale.total ?? total, paid }, payment);
     setCart([]);
     setPayment({ customer_uuid: '', payment_type: 'cash', discount: 0, tax: brand?.tax || 0, paid: 0, due_date: '' });
     await refresh();
-    printInvoice(sale, cart, brand, receiptFormat);
+    printInvoice(printableSale, cart, brand, receiptFormat);
   }
 
   async function createWalkIn() {
@@ -2507,7 +2558,9 @@ async function addMedicineToInventory(medicine) {
     medicine_uuid: medicine.uuid,
     warranty: medicine.expiry_tracking ? 'Expiry tracked' : '',
   };
-  await saveRecord('products', product);
+  const saved = await saveRecord('products', product);
+  window.dispatchEvent(new CustomEvent('msm:product-saved', { detail: saved }));
+  await auditProductHydration(saved);
   notify('Medicine added to inventory');
 }
 
@@ -2745,9 +2798,51 @@ function receiptFormatClass(format = 'a4') {
   return 'a4-invoice';
 }
 
+function paymentDisplay(invoice = {}) {
+  const total = Number(invoice.total ?? invoice.grand_total ?? invoice.grandTotal ?? 0);
+  const paid = Number(invoice.paid ?? invoice.paid_amount ?? invoice.paidAmount ?? 0);
+  const changeReturn = Math.max(0, Number(invoice.change_return ?? invoice.changeReturn ?? paid - total));
+  const dueSource = invoice.due_amount ?? invoice.dueAmount ?? (paid < total ? total - paid : invoice.balance ?? 0);
+  const dueAmount = Math.max(0, Number(dueSource));
+  return {
+    total,
+    paid,
+    changeReturn: dueAmount > 0 ? 0 : changeReturn,
+    dueAmount: changeReturn > 0 ? 0 : dueAmount,
+    method: formatPaymentMethod(invoice.payment_method || invoice.payment_type || invoice.payment || 'Cash'),
+  };
+}
+
+function formatPaymentMethod(value = 'Cash') {
+  return String(value || 'Cash')
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function invoiceWithPaymentMeta(invoice = {}, payment = {}) {
+  const total = Number(invoice.total ?? invoice.grand_total ?? 0);
+  const paid = Number(invoice.paid ?? payment.paid ?? 0);
+  const changeReturn = Math.max(0, paid - total);
+  const dueAmount = Math.max(0, total - paid);
+  return {
+    ...invoice,
+    payment_type: invoice.payment_type || payment.payment_type || 'cash',
+    payment_method: invoice.payment_method || payment.payment_type || invoice.payment_type || 'cash',
+    total,
+    paid,
+    balance: dueAmount,
+    due_amount: dueAmount,
+    change_return: changeReturn,
+  };
+}
+
 function printInvoice(sale, cart = [], brand = {}, format = 'a4') {
   const qr = receiptQrData(sale);
-  const html = `<section class="receipt-shell ${receiptFormatClass(format)}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p>${sale.customer_name || 'Walk-in Customer'} - ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>IMEI / Serial</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${item.product_name}</td><td>${imeiListText(item)}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('') : `<tr><td colspan="4">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Total: ${money(sale.total)}</h3><p>Paid: ${money(sale.paid)} | Balance: ${money(sale.balance)}</p><p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
+  const payment = paymentDisplay(sale);
+  const settlement = payment.changeReturn > 0
+    ? `<p><strong>Change Return:</strong> ${money(payment.changeReturn)}</p>`
+    : `<p><strong>Due Amount:</strong> ${money(payment.dueAmount)}</p>`;
+  const html = `<section class="receipt-shell ${receiptFormatClass(format)}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p><strong>Invoice Number:</strong> ${sale.invoice_number || ''}</p><p><strong>Customer:</strong> ${sale.customer_name || 'Walk-in Customer'}</p><p><strong>Date:</strong> ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>IMEI / Serial</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${item.product_name}</td><td>${imeiListText(item)}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('') : `<tr><td colspan="4">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Grand Total: ${money(payment.total)}</h3><p><strong>Payment Method:</strong> ${payment.method}</p><p><strong>Paid Amount:</strong> ${money(payment.paid)}</p>${settlement}<p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
   printHtml(`Invoice ${sale.invoice_number}`, html);
 }
 
@@ -2782,34 +2877,39 @@ function printPatientTokenSlip(patient, brand = {}) {
 }
 
 function invoicePdfLines(invoice, cart, brand = {}) {
+  const payment = paymentDisplay(invoice);
   return [
     shopDisplayName(brand),
     brand?.contact_number || '',
-    `Invoice: ${invoice.invoice_number}`,
-    `Customer: ${invoice.customer_name}`,
+    `Invoice Number: ${invoice.invoice_number}`,
+    `Customer Name: ${invoice.customer_name || 'Walk-in Customer'}`,
     ...cart.map((item) => `${item.product_name} x ${item.quantity} - ${money(Number(item.quantity) * Number(item.price))}${imeiListText(item) ? ` | IMEI: ${imeiListText(item)}` : ''}`),
     `Subtotal: ${money(invoice.subtotal)}`,
     `Discount: ${money(invoice.discount)}`,
     `Tax: ${money(invoice.tax)}`,
-    `Total: ${money(invoice.total)}`,
-    `Paid: ${money(invoice.paid)}`,
-    `Balance: ${money(invoice.balance)}`,
+    `Payment Method: ${payment.method}`,
+    `Grand Total: ${money(payment.total)}`,
+    `Paid Amount: ${money(payment.paid)}`,
+    payment.changeReturn > 0 ? `Change Return: ${money(payment.changeReturn)}` : `Due Amount: ${money(payment.dueAmount)}`,
     brand?.footer || 'Thank you for your business.',
   ];
 }
 
 function invoiceMessage(invoice, brand = {}, cart = []) {
+  const payment = paymentDisplay(invoice);
   const items = cart.length ? `\nItems:\n${cart.map((item) => {
     const imei = imeiListText(item);
     return `- ${item.product_name} x ${item.quantity || 1} @ ${money(item.price || 0)}${imei ? `\n  IMEI: ${imei}` : ''}`;
   }).join('\n')}` : '';
-  const status = invoice.status || (Number(invoice.balance || 0) > 0 ? 'Credit Due' : 'Paid');
+  const status = invoice.status || (payment.dueAmount > 0 ? 'Credit Due' : 'Paid');
+  const settlement = payment.changeReturn > 0 ? `Change Return: ${money(payment.changeReturn)}` : `Due Amount: ${money(payment.dueAmount)}`;
   return `${shopDisplayName(brand)}
-Invoice: ${invoice.invoice_number}
-Customer: ${invoice.customer_name || 'Walk-in Customer'}${items}
-Total: ${money(invoice.total)}
-Paid: ${money(invoice.paid)}
-Balance: ${money(invoice.balance)}
+Invoice Number: ${invoice.invoice_number}
+Customer Name: ${invoice.customer_name || 'Walk-in Customer'}${items}
+Payment Method: ${payment.method}
+Grand Total: ${money(payment.total)}
+Paid Amount: ${money(payment.paid)}
+${settlement}
 Payment Status: ${status}`;
 }
 
