@@ -417,13 +417,15 @@ export async function deleteRecord(store, uuid, mode = 'soft') {
   await auditLog('soft_delete', store, uuid, deleted);
 }
 
-export async function barcodeLookup(scan, data = null) {
+export async function barcodeLookup(scan, data = null, options = {}) {
   const term = normalizeScan(scan);
   if (!term) throw new Error('Scan code is required.');
 
   if (navigator.onLine && localStorage.getItem('dsh_token')) {
     try {
-      const response = await fetch(`${API_URL}/barcode/lookup?q=${encodeURIComponent(term)}`, {
+      const params = new URLSearchParams({ q: term });
+      if (options.limit) params.set('limit', String(options.limit));
+      const response = await fetch(`${API_URL}/barcode/lookup?${params.toString()}`, {
         headers: {
           Accept: 'application/json',
           Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
@@ -433,6 +435,7 @@ export async function barcodeLookup(scan, data = null) {
       const payload = await response.json().catch(() => ({}));
       if (response.ok) {
         await cacheBarcodeLookup(payload);
+        await Promise.all((payload.results || []).map((result) => cacheBarcodeLookup(result)));
         return payload;
       }
       if (response.status !== 404 && response.status !== 422) {
@@ -443,7 +446,7 @@ export async function barcodeLookup(scan, data = null) {
     }
   }
 
-  return localBarcodeLookup(term, data);
+  return localBarcodeLookup(term, data, options);
 }
 
 export async function receiveInventoryByScan({ scan, product_uuid, quantity = 1, cost_price, purchase_price, batch_number, expiry_date, reference, reason } = {}, data = null) {
@@ -514,7 +517,7 @@ async function cacheBarcodeLookup(payload = {}) {
   }
 }
 
-async function localBarcodeLookup(scan, data = null) {
+async function localBarcodeLookup(scan, data = null, options = {}) {
   const term = normalizeScan(scan);
   const products = data?.products || await listRecords('products');
   const imeis = data?.imei_registry || await listRecords('imei_registry');
@@ -522,30 +525,56 @@ async function localBarcodeLookup(scan, data = null) {
   const catalogs = data?.master_catalogs || await listRecords('master_catalogs');
   const exact = (value) => normalizeScan(value).toLowerCase() === term.toLowerCase();
 
+  for (const field of ['barcode', 'secondary_barcode', 'qr_code']) {
+    const product = products.find((row) => exact(row[field]));
+    if (product) return withLocalResults({ match_type: field, scan, product, imei: null, quantity_multiplier: localQuantityMultiplier(field, product) }, term, products, imeis, options);
+  }
+
   const imei = imeis.find((row) => [row.imei_1, row.imei_2, row.serial_number, ...(normalizeImeiList(row.imei_numbers || []))]
     .some((value) => exact(value)));
   if (imei) {
     const product = products.find((row) => row.uuid === imei.product_uuid) || null;
-    return { match_type: 'imei', scan, product, imei, quantity_multiplier: 1 };
+    return withLocalResults({ match_type: 'imei', scan, product, imei, quantity_multiplier: 1 }, term, products, imeis, options);
   }
 
-  for (const field of ['barcode', 'secondary_barcode', 'qr_code', 'sku', 'box_barcode', 'carton_barcode']) {
+  for (const field of ['sku', 'product_code', 'box_barcode', 'carton_barcode']) {
     const product = products.find((row) => exact(row[field]));
-    if (product) return { match_type: field, scan, product, imei: null, quantity_multiplier: localQuantityMultiplier(field, product) };
+    if (product) return withLocalResults({ match_type: field, scan, product, imei: null, quantity_multiplier: localQuantityMultiplier(field, product) }, term, products, imeis, options);
   }
 
-  const product = products.find((row) => String(row.product_name || '').toLowerCase().includes(term.toLowerCase()));
-  if (product) return { match_type: 'product_name', scan, product, imei: null, quantity_multiplier: 1 };
+  const product = products.find((row) => [row.product_name, row.brand].some((value) => String(value || '').toLowerCase().includes(term.toLowerCase())));
+  if (product) return withLocalResults({ match_type: String(product.product_name || '').toLowerCase().includes(term.toLowerCase()) ? 'product_name' : 'brand', scan, product, imei: null, quantity_multiplier: 1 }, term, products, imeis, options);
 
   const medicine = medicines.find((row) => [row.barcode, row.registration_no].some((value) => exact(value))
     || [row.brand_name, row.generic_name, row.composition].some((value) => String(value || '').toLowerCase().includes(term.toLowerCase())));
-  if (medicine) return { match_type: 'medicine_master', scan, medicine, product: null, imei: null, quantity_multiplier: 1 };
+  if (medicine) return { match_type: 'medicine_master', scan, medicine, product: null, imei: null, quantity_multiplier: 1, results: [] };
 
-  const catalog = catalogs.find((row) => ['barcode', 'secondary_barcode', 'qr_code', 'product_name', 'name']
+  const catalog = catalogs.find((row) => ['barcode', 'secondary_barcode', 'qr_code', 'product_code', 'brand', 'product_name', 'name']
     .some((field) => field.includes('name') ? String(row[field] || '').toLowerCase().includes(term.toLowerCase()) : exact(row[field])));
-  if (catalog) return { match_type: 'master_catalog', scan, catalog, product: null, imei: null, quantity_multiplier: localQuantityMultiplier('catalog', catalog) };
+  if (catalog) return { match_type: 'master_catalog', scan, catalog, product: null, imei: null, quantity_multiplier: localQuantityMultiplier('catalog', catalog), results: [] };
 
   throw new Error('No product found for this scan.');
+}
+
+function withLocalResults(payload, term, products, imeis, options = {}) {
+  const limit = Number(options.limit || 0);
+  if (!limit) return payload;
+  const seen = new Set();
+  const results = [];
+  const add = (match_type, product, imei = null, quantity_multiplier = 1) => {
+    if (!product?.uuid || seen.has(`${product.uuid}:${match_type}`)) return;
+    seen.add(`${product.uuid}:${match_type}`);
+    results.push({ match_type, product, imei, quantity_multiplier });
+  };
+  for (const field of ['barcode', 'secondary_barcode', 'qr_code', 'sku', 'product_code', 'box_barcode', 'carton_barcode']) {
+    products.filter((row) => normalizeScan(row[field]).toLowerCase() === term.toLowerCase()).forEach((product) => add(field, product, null, localQuantityMultiplier(field, product)));
+  }
+  imeis.filter((row) => [row.imei_1, row.imei_2, row.serial_number, ...(normalizeImeiList(row.imei_numbers || []))]
+    .some((value) => normalizeScan(value).toLowerCase() === term.toLowerCase()))
+    .forEach((imei) => add('imei', products.find((row) => row.uuid === imei.product_uuid), imei, 1));
+  products.filter((row) => [row.product_name, row.brand, row.category].some((value) => String(value || '').toLowerCase().includes(term.toLowerCase())))
+    .forEach((product) => add(String(product.product_name || '').toLowerCase().includes(term.toLowerCase()) ? 'product_name' : 'brand', product));
+  return { ...payload, results: results.slice(0, limit) };
 }
 
 function normalizeScan(value) {

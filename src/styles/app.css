@@ -78,6 +78,13 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .form-wide { @apply min-w-0 sm:col-span-2; }
 .inline-form { @apply my-4 grid min-w-0 gap-3 sm:grid-cols-2; }
 .inline-form button { @apply sm:col-span-2; }
+.lookup-box { @apply relative min-w-0; }
+.lookup-box input { @apply h-10 w-full min-w-0 rounded-2xl border border-black/10 bg-white px-3 text-ink outline-none focus:border-mint dark:border-white/10 dark:bg-black/20 dark:text-white; }
+.lookup-results { @apply absolute left-0 right-0 top-11 z-30 grid max-h-72 gap-1 overflow-auto rounded-2xl border border-black/10 bg-white p-2 shadow-xl dark:border-white/10 dark:bg-ink; }
+.lookup-result { @apply grid gap-1 rounded-xl px-3 py-2 text-left hover:bg-mint/10; }
+.lookup-result strong { @apply text-sm text-ink dark:text-white; }
+.lookup-result span, .lookup-selected span { @apply text-xs text-black/60 dark:text-white/60; }
+.lookup-selected { @apply mb-4 grid gap-1 rounded-2xl border border-mint/30 bg-mint/10 p-3; }
 .totals { @apply my-4 flex items-center justify-between rounded border border-black/10 bg-paper p-3 dark:border-white/10 dark:bg-black/20; }
 .totals strong { @apply text-xl; }
 .inventory-total { @apply flex-wrap gap-3; }
