@@ -417,6 +417,147 @@ export async function deleteRecord(store, uuid, mode = 'soft') {
   await auditLog('soft_delete', store, uuid, deleted);
 }
 
+export async function barcodeLookup(scan, data = null) {
+  const term = normalizeScan(scan);
+  if (!term) throw new Error('Scan code is required.');
+
+  if (navigator.onLine && localStorage.getItem('dsh_token')) {
+    try {
+      const response = await fetch(`${API_URL}/barcode/lookup?q=${encodeURIComponent(term)}`, {
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+          'X-Device-Id': localStorage.getItem('dsh_device_id') || ensureDeviceId(),
+        },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (response.ok) {
+        await cacheBarcodeLookup(payload);
+        return payload;
+      }
+      if (response.status !== 404 && response.status !== 422) {
+        throw new Error(payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Barcode lookup failed.');
+      }
+    } catch (error) {
+      if (navigator.onLine && !data) throw error;
+    }
+  }
+
+  return localBarcodeLookup(term, data);
+}
+
+export async function receiveInventoryByScan({ scan, product_uuid, quantity = 1, cost_price, purchase_price, batch_number, expiry_date, reference, reason } = {}, data = null) {
+  const qty = Math.max(1, Number(quantity || 1));
+  if (navigator.onLine && localStorage.getItem('dsh_token')) {
+    try {
+      const response = await fetch(`${API_URL}/barcode/receive`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+          'X-Device-Id': localStorage.getItem('dsh_device_id') || ensureDeviceId(),
+        },
+        body: JSON.stringify({ scan, product_uuid, quantity: qty, cost_price, purchase_price, batch_number, expiry_date, reference, reason }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (response.ok) {
+        await cacheBarcodeLookup({ product: payload.product });
+        if (payload.inventory_transaction?.uuid) {
+          const db = await database();
+          await db.put('inventory_transactions', normalizeNumbers(scopeRecordForSave('inventory_transactions', { ...payload.inventory_transaction, sync_status: 'synced' })));
+        }
+        return payload.product;
+      }
+      throw new Error(payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Inventory receiving failed.');
+    } catch (error) {
+      if (navigator.onLine && !data) throw error;
+    }
+  }
+
+  const lookup = product_uuid ? { product: await getRecord('products', product_uuid), quantity_multiplier: 1 } : await localBarcodeLookup(scan, data);
+  const product = lookup.product;
+  if (!product?.uuid) throw new Error('Product not found for this scan.');
+  const finalQuantity = qty * Number(lookup.quantity_multiplier || 1);
+  const updated = await saveRecord('products', {
+    ...product,
+    purchase_price: Number(cost_price ?? purchase_price ?? product.purchase_price ?? 0),
+    batch_number: batch_number ?? product.batch_number,
+    expiry_date: expiry_date ?? product.expiry_date,
+    quantity: Number(product.quantity || 0) + finalQuantity,
+  });
+  await saveRecord('inventory_transactions', {
+    product_uuid: product.uuid,
+    product_name: product.product_name,
+    type: 'Stock In',
+    quantity: finalQuantity,
+    reference: reference || 'BARCODE-RECEIVE',
+    reason: reason || 'Barcode Receiving',
+    transacted_at: new Date().toISOString(),
+  });
+  return updated;
+}
+
+async function cacheBarcodeLookup(payload = {}) {
+  const db = await database();
+  if (payload.product?.uuid) {
+    await db.put('products', normalizeNumbers(scopeRecordForSave('products', { ...payload.product, sync_status: 'synced' })));
+  }
+  if (payload.imei?.uuid) {
+    await db.put('imei_registry', normalizeNumbers(scopeRecordForSave('imei_registry', { ...payload.imei, sync_status: 'synced' })));
+  }
+  if (payload.medicine?.uuid) {
+    await db.put('medicines', normalizeNumbers(scopeRecordForSave('medicines', { ...payload.medicine, sync_status: 'synced' })));
+  }
+  if (payload.catalog?.uuid) {
+    await db.put('master_catalogs', normalizeNumbers(scopeRecordForSave('master_catalogs', { ...payload.catalog, sync_status: 'synced' })));
+  }
+}
+
+async function localBarcodeLookup(scan, data = null) {
+  const term = normalizeScan(scan);
+  const products = data?.products || await listRecords('products');
+  const imeis = data?.imei_registry || await listRecords('imei_registry');
+  const medicines = data?.medicines || await listRecords('medicines');
+  const catalogs = data?.master_catalogs || await listRecords('master_catalogs');
+  const exact = (value) => normalizeScan(value).toLowerCase() === term.toLowerCase();
+
+  const imei = imeis.find((row) => [row.imei_1, row.imei_2, row.serial_number, ...(normalizeImeiList(row.imei_numbers || []))]
+    .some((value) => exact(value)));
+  if (imei) {
+    const product = products.find((row) => row.uuid === imei.product_uuid) || null;
+    return { match_type: 'imei', scan, product, imei, quantity_multiplier: 1 };
+  }
+
+  for (const field of ['barcode', 'secondary_barcode', 'qr_code', 'sku', 'box_barcode', 'carton_barcode']) {
+    const product = products.find((row) => exact(row[field]));
+    if (product) return { match_type: field, scan, product, imei: null, quantity_multiplier: localQuantityMultiplier(field, product) };
+  }
+
+  const product = products.find((row) => String(row.product_name || '').toLowerCase().includes(term.toLowerCase()));
+  if (product) return { match_type: 'product_name', scan, product, imei: null, quantity_multiplier: 1 };
+
+  const medicine = medicines.find((row) => [row.barcode, row.registration_no].some((value) => exact(value))
+    || [row.brand_name, row.generic_name, row.composition].some((value) => String(value || '').toLowerCase().includes(term.toLowerCase())));
+  if (medicine) return { match_type: 'medicine_master', scan, medicine, product: null, imei: null, quantity_multiplier: 1 };
+
+  const catalog = catalogs.find((row) => ['barcode', 'secondary_barcode', 'qr_code', 'product_name', 'name']
+    .some((field) => field.includes('name') ? String(row[field] || '').toLowerCase().includes(term.toLowerCase()) : exact(row[field])));
+  if (catalog) return { match_type: 'master_catalog', scan, catalog, product: null, imei: null, quantity_multiplier: localQuantityMultiplier('catalog', catalog) };
+
+  throw new Error('No product found for this scan.');
+}
+
+function normalizeScan(value) {
+  return String(value || '').trim();
+}
+
+function localQuantityMultiplier(field, row = {}) {
+  if (field === 'carton_barcode') return Math.max(1, Number(row.units_per_carton || row.units_per_package || 1));
+  if (field === 'box_barcode') return Math.max(1, Number(row.units_per_box || row.units_per_package || 1));
+  return 1;
+}
+
 async function deletePatientWorkflowLocally(db, patientUuid, mode = 'soft') {
   const stores = ['hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items'];
   const now = new Date().toISOString();

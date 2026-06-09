@@ -20,6 +20,7 @@ import {
   normalizePakistanPhone,
   completeHospitalPrescription, completeHospitalLabReport, completeHospitalRadiologyReport, reviewHospitalReport,
   recalculateHospitalBill, saveHospitalBillPayment, createTraderDeliveryChallan, createTraderRecovery,
+  barcodeLookup, receiveInventoryByScan,
 } from './lib/db.js';
 import './styles/app.css';
 
@@ -181,12 +182,12 @@ const RESOURCES = {
   products: {
     title: 'Inventory Management',
     store: 'products',
-    search: ['product_name', 'category', 'brand', 'model', 'sku', 'imei', 'imei_numbers', 'barcode', 'batch_number', 'status'],
+    search: ['product_name', 'category', 'brand', 'model', 'sku', 'imei', 'imei_numbers', 'barcode', 'secondary_barcode', 'qr_code', 'box_barcode', 'carton_barcode', 'batch_number', 'status'],
     columns: ['product_name', 'category', 'brand', 'imei_numbers', 'unit', 'package_quantity', 'units_per_package', 'quantity', 'purchase_price', 'package_cost_price', 'total_cost', 'sale_price', 'low_stock_threshold', 'status'],
     rowMap: inventoryRows,
     fields: [
       ['product_name', 'Product Name', 'text', true], ['category', 'Category', 'select', true, ['General', ...TRADERS_CATEGORIES, 'Pharmacy', 'Electronics', 'Clothing', 'Hardware', 'Accessories', 'Spare Parts']], ['company_name', 'Company Name'], ['company_uuid', 'Company UUID'], ['brand', 'Brand'], ['model', 'Model'],
-      ['sku', 'SKU'], ['barcode', 'Barcode'], ['unit', 'Unit', 'select', true, RETAIL_UNITS], ['variant_type', 'Variant Type', 'select', false, RETAIL_UNITS], ['pack_size', 'Pack Size'], ['batch_number', 'Batch Number'],
+      ['sku', 'SKU'], ['barcode', 'Barcode'], ['secondary_barcode', 'Secondary Barcode'], ['qr_code', 'QR Code'], ['box_barcode', 'Box Barcode'], ['carton_barcode', 'Carton Barcode'], ['unit', 'Unit', 'select', true, RETAIL_UNITS], ['variant_type', 'Variant Type', 'select', false, RETAIL_UNITS], ['pack_size', 'Pack Size'], ['batch_number', 'Batch Number'],
       ['expiry_date', 'Expiry Date', 'date'], ['imei_numbers', 'IMEI Numbers'], ['purchase_price', 'Purchase Price', 'number'], ['sale_price', 'Sale Price', 'number'],
       ['quantity', 'Quantity', 'number'], ['low_stock_threshold', 'Low Stock Warning', 'number'], ['manufacturer', 'Manufacturer'], ['warranty', 'Warranty'], ['supplier_name', 'Supplier'],
     ],
@@ -1271,6 +1272,7 @@ function Inventory({ rows, brand, refresh }) {
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [receiving, setReceiving] = useState({ scan: '', quantity: 1, cost_price: '', batch_number: '', expiry_date: '' });
   const importRef = useRef(null);
   const columns = RESOURCES.products.columns;
   const categoryOptions = categoriesForBusiness(brand);
@@ -1292,6 +1294,11 @@ function Inventory({ rows, brand, refresh }) {
 
   async function submit(event) {
     event.preventDefault();
+    const duplicate = duplicateProductBarcode(rows, editing);
+    if (duplicate) {
+      notify(`${duplicate.field} already assigned to ${duplicate.product.product_name}`);
+      return;
+    }
     const product = await saveRecord('products', calculatedProduct(editing));
     runInBackground(() => saveRemoteRecord('products', product), 'Inventory synced in background');
     setEditing(null);
@@ -1319,8 +1326,20 @@ function Inventory({ rows, brand, refresh }) {
     setEditing((current) => calculatedProduct({ ...current, [key]: value }));
   }
 
+  async function receiveScan(event) {
+    event.preventDefault();
+    try {
+      await receiveInventoryByScan(receiving, { products: rows });
+      setReceiving({ scan: '', quantity: 1, cost_price: '', batch_number: '', expiry_date: '' });
+      await refresh();
+      notify('Scanned stock received successfully');
+    } catch (error) {
+      notify(error.message || 'Barcode receiving failed');
+    }
+  }
+
   const edit = calculatedProduct(editing || blank);
-  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(calculatedProduct(row))}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Product Detail" row={viewing} columns={[...columns, 'barcode', 'sku', 'variant_type', 'pack_size', 'batch_number', 'expiry_date', 'imei_numbers', 'manufacturer', 'warranty', 'supplier_name']} onClose={() => setViewing(null)} />}{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={edit.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={edit.category || categoryOptions[0]} onChange={(event) => change('category', event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={edit.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label><label>SKU<input value={edit.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Barcode<input value={edit.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Unit<select value={edit.unit || 'Single Unit'} onChange={(event) => change('unit', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Variant Type<select value={edit.variant_type || edit.unit || 'Single Unit'} onChange={(event) => change('variant_type', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Pack Size<input value={edit.pack_size || ''} onChange={(event) => change('pack_size', event.target.value)} /></label><label>Boxes / Packs Qty<input type="number" min="0" value={edit.package_quantity || 0} onChange={(event) => change('package_quantity', event.target.value)} /></label><label>Pcs Per Box / Pack<input type="number" min="1" value={edit.units_per_package || 1} onChange={(event) => change('units_per_package', event.target.value)} /></label><label>Loose Pcs<input type="number" min="0" value={edit.loose_quantity || 0} onChange={(event) => change('loose_quantity', event.target.value)} /></label><label>Total Stock Pcs<input type="number" readOnly value={edit.quantity || 0} /></label><label>Cost Per Pc<input type="number" min="0" step="0.01" value={edit.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label><label>Cost Per Box / Pack<input type="number" readOnly value={edit.package_cost_price || 0} /></label><label>Total Cost<input type="number" readOnly value={edit.total_cost || 0} /></label><label>Sale Price Per Pc<input type="number" min="0" step="0.01" value={edit.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Low Stock Warning<input type="number" min="0" value={edit.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label><label>Batch Number<input value={edit.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label><label>Expiry Date<input type="date" value={edit.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label><label>IMEI Numbers<textarea rows="3" value={imeiListText(edit)} onChange={(event) => { change('imei_numbers', event.target.value); change('imei', event.target.value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)[0] || ''); }} /></label><label>Manufacturer<input value={edit.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label><label>Warranty<input value={edit.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label><label>Supplier<input value={edit.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div><div className="totals inventory-total"><span>Total Stock: <strong>{edit.quantity || 0} pcs</strong></span><span>Per Box Cost: <strong>{money(edit.package_cost_price)}</strong></span><span>Total Cost: <strong>{money(edit.total_cost)}</strong></span></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><form className="inline-form" onSubmit={receiveScan}><input placeholder="Scan barcode / QR / SKU / IMEI" value={receiving.scan} onChange={(event) => setReceiving({ ...receiving, scan: event.target.value })} /><input type="number" min="1" value={receiving.quantity} onChange={(event) => setReceiving({ ...receiving, quantity: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Cost" value={receiving.cost_price} onChange={(event) => setReceiving({ ...receiving, cost_price: event.target.value })} /><input placeholder="Batch" value={receiving.batch_number} onChange={(event) => setReceiving({ ...receiving, batch_number: event.target.value })} /><input type="date" value={receiving.expiry_date} onChange={(event) => setReceiving({ ...receiving, expiry_date: event.target.value })} /><button className="ghost-btn" disabled={!receiving.scan}><Plus size={15} /> Receive Scan</button></form><input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(calculatedProduct(row))}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Product Detail" row={viewing} columns={[...columns, 'barcode', 'secondary_barcode', 'qr_code', 'box_barcode', 'carton_barcode', 'sku', 'variant_type', 'pack_size', 'batch_number', 'expiry_date', 'imei_numbers', 'manufacturer', 'warranty', 'supplier_name']} onClose={() => setViewing(null)} />}{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={edit.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={edit.category || categoryOptions[0]} onChange={(event) => change('category', event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={edit.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label><label>SKU<input value={edit.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Barcode<input value={edit.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Secondary Barcode<input value={edit.secondary_barcode || ''} onChange={(event) => change('secondary_barcode', event.target.value)} /></label><label>QR Code<input value={edit.qr_code || ''} onChange={(event) => change('qr_code', event.target.value)} /></label><label>Box Barcode<input value={edit.box_barcode || ''} onChange={(event) => change('box_barcode', event.target.value)} /></label><label>Carton Barcode<input value={edit.carton_barcode || ''} onChange={(event) => change('carton_barcode', event.target.value)} /></label><label>Unit<select value={edit.unit || 'Single Unit'} onChange={(event) => change('unit', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Variant Type<select value={edit.variant_type || edit.unit || 'Single Unit'} onChange={(event) => change('variant_type', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Pack Size<input value={edit.pack_size || ''} onChange={(event) => change('pack_size', event.target.value)} /></label><label>Boxes / Packs Qty<input type="number" min="0" value={edit.package_quantity || 0} onChange={(event) => change('package_quantity', event.target.value)} /></label><label>Pcs Per Box / Pack<input type="number" min="1" value={edit.units_per_package || 1} onChange={(event) => change('units_per_package', event.target.value)} /></label><label>Loose Pcs<input type="number" min="0" value={edit.loose_quantity || 0} onChange={(event) => change('loose_quantity', event.target.value)} /></label><label>Total Stock Pcs<input type="number" readOnly value={edit.quantity || 0} /></label><label>Cost Per Pc<input type="number" min="0" step="0.01" value={edit.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label><label>Cost Per Box / Pack<input type="number" readOnly value={edit.package_cost_price || 0} /></label><label>Total Cost<input type="number" readOnly value={edit.total_cost || 0} /></label><label>Sale Price Per Pc<input type="number" min="0" step="0.01" value={edit.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Low Stock Warning<input type="number" min="0" value={edit.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label><label>Batch Number<input value={edit.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label><label>Expiry Date<input type="date" value={edit.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label><label>IMEI Numbers<textarea rows="3" value={imeiListText(edit)} onChange={(event) => { change('imei_numbers', event.target.value); change('imei', event.target.value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)[0] || ''); }} /></label><label>Manufacturer<input value={edit.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label><label>Warranty<input value={edit.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label><label>Supplier<input value={edit.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div><div className="totals inventory-total"><span>Total Stock: <strong>{edit.quantity || 0} pcs</strong></span><span>Per Box Cost: <strong>{money(edit.package_cost_price)}</strong></span><span>Total Cost: <strong>{money(edit.total_cost)}</strong></span></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function calculatedProduct(record) {
@@ -1344,6 +1363,24 @@ function calculatedProduct(record) {
     package_cost_price: purchasePrice * unitsPerPackage,
     total_cost: purchasePrice * quantity,
   };
+}
+
+function duplicateProductBarcode(rows = [], record = {}) {
+  const labels = {
+    barcode: 'Barcode',
+    secondary_barcode: 'Secondary barcode',
+    qr_code: 'QR code',
+    sku: 'SKU',
+    box_barcode: 'Box barcode',
+    carton_barcode: 'Carton barcode',
+  };
+  for (const field of Object.keys(labels)) {
+    const value = String(record?.[field] || '').trim().toLowerCase();
+    if (!value) continue;
+    const product = rows.find((row) => row.uuid !== record.uuid && String(row?.[field] || '').trim().toLowerCase() === value);
+    if (product) return { field: labels[field], product };
+  }
+  return null;
 }
 
 function DeleteDialog({ row, store, onClose, onDelete }) {
@@ -1385,11 +1422,12 @@ function runInBackground(task, successMessage) {
 
 function POS2({ data, brand, refresh }) {
   const [query, setQuery] = useState('');
+  const [scan, setScan] = useState('');
   const [cart, setCart] = useState([]);
   const [payment, setPayment] = useState({ customer_uuid: '', payment_type: 'cash', discount: 0, tax: brand?.tax || 0, paid: 0, due_date: '' });
   const [quick, setQuick] = useState({ name: '', phone: '', address: '', cnic: '', notes: '' });
   const isTraders = businessTypeKey(brand?.business_type) === 'traders';
-  const products = filterRows(data.products || [], query, ['product_name', 'barcode', 'sku', 'imei', 'imei_numbers', 'brand', 'model', 'batch_number']);
+  const products = filterRows(data.products || [], query, ['product_name', 'barcode', 'secondary_barcode', 'qr_code', 'box_barcode', 'carton_barcode', 'sku', 'imei', 'imei_numbers', 'brand', 'model', 'batch_number']);
   const customerOptions = isTraders ? (data.trader_retailers || []).map((item) => ({ ...item, name: item.shop_name || item.owner_name })) : (data.customers || []);
   const customer = customerOptions.find((item) => item.uuid === payment.customer_uuid);
   const subtotal = cart.reduce((sum, item) => sum + Number(item.quantity) * Number(item.price), 0);
@@ -1398,16 +1436,35 @@ function POS2({ data, brand, refresh }) {
   const draftInvoice = { invoice_number: 'DRAFT', customer_name: customer?.name || quick.name || 'Walk-in Customer', subtotal, discount: payment.discount, tax: payment.tax, total, paid, balance: Math.max(0, total - paid), sold_at: new Date().toISOString() };
   const usesImeiTracking = businessTypeKey(brand?.business_type) === 'mobile_shop';
 
-  function addToCart(product) {
-    setCart((items) => items.some((item) => item.product_uuid === product.uuid)
-      ? items.map((item) => item.product_uuid === product.uuid ? { ...item, quantity: item.quantity + 1 } : item)
+  function addToCart(product, match = {}) {
+    const cartKey = match.imei?.uuid || `${product.uuid}:${match.match_type || 'product'}`;
+    const quantity = Math.max(1, Number(match.quantity_multiplier || 1));
+    setCart((items) => items.some((item) => item.cart_key === cartKey)
+      ? items.map((item) => item.cart_key === cartKey ? { ...item, quantity: item.quantity + quantity } : item)
       : [...items, {
+        cart_key: cartKey,
         product_uuid: product.uuid,
         product_name: product.product_name,
-        ...(usesImeiTracking ? { imei: product.imei, imei_numbers: imeiListText(product) } : {}),
-        quantity: 1,
+        ...(usesImeiTracking ? { imei_uuid: match.imei?.uuid, imei: match.imei?.imei_1 || product.imei, imei_numbers: match.imei ? imeiListText(match.imei) : imeiListText(product) } : {}),
+        quantity,
         price: Number(product.sale_price || 0),
       }]);
+  }
+
+  async function scanToCart(event) {
+    event.preventDefault();
+    try {
+      const match = await barcodeLookup(scan, data);
+      if (!match.product?.uuid) {
+        notify('Scanned item is in catalog only. Add it to inventory before sale.');
+        return;
+      }
+      addToCart(match.product, match);
+      setScan('');
+      notify(`Added ${match.product.product_name}`);
+    } catch (error) {
+      notify(error.message || 'Barcode scan failed');
+    }
   }
 
   async function completeSale() {
@@ -1454,7 +1511,7 @@ function POS2({ data, brand, refresh }) {
     return () => window.removeEventListener('keydown', handler);
   }, [cart, payment, quick, brand]);
 
-  return <div className="pos-grid"><section className="panel"><div className="module-head"><h2>Modern POS</h2><span className="shortcut-pill"><Keyboard size={15} /> F1 New - F2 Customer - F3 Product - F4 Checkout - F5 Print</span></div><SearchBox value={query} onChange={setQuery} placeholder="Product search, barcode, SKU or serial" inputProps={{ 'data-product-search': true }} /><div className="product-picker">{products.length ? products.map((product) => <button key={product.uuid} onClick={() => addToCart(product)}><div className="product-thumb">{product.image ? <img src={product.image} alt="" /> : <Smartphone size={22} />}</div><strong>{product.product_name}</strong><span>{product.barcode || product.sku || imeiListText(product)}</span><b>{money(product.sale_price)}</b><small>{product.quantity} in stock</small></button>) : <EmptyRows />}</div></section><section className="panel cart-panel"><h2>Quick Cart & Fast Checkout</h2><DataTable rows={cart} columns={['product_name', 'imei_numbers', 'quantity', 'price']} actions={(row) => <button className="danger-btn" onClick={() => setCart(cart.filter((item) => item.product_uuid !== row.product_uuid))}><Trash2 size={15} /></button>} editable={(row, key, value) => setCart(cart.map((item) => item.product_uuid === row.product_uuid ? { ...item, [key]: ['quantity', 'price'].includes(key) ? Number(value) : value } : item))} />{!isTraders && <div className="quick-customer"><strong>Quick Customer Entry</strong><div className="inline-form quick"><input placeholder="Name" value={quick.name} onChange={(e) => setQuick({ ...quick, name: e.target.value })} /><input placeholder="Phone" value={quick.phone} onChange={(e) => setQuick({ ...quick, phone: e.target.value })} /><input placeholder="Address" value={quick.address} onChange={(e) => setQuick({ ...quick, address: e.target.value })} /><input placeholder="CNIC" value={quick.cnic} onChange={(e) => setQuick({ ...quick, cnic: e.target.value })} /><input placeholder="Notes" value={quick.notes} onChange={(e) => setQuick({ ...quick, notes: e.target.value })} /><button className="ghost-btn" type="button" onClick={createWalkIn} disabled={!quick.name && !quick.phone}><Plus size={15} /> Create Customer</button></div></div>}<div className="form-grid"><label>{isTraders ? 'Retailer' : 'Customer'}<select data-customer-select value={payment.customer_uuid} onChange={(e) => setPayment({ ...payment, customer_uuid: e.target.value })}><option value="">{isTraders ? 'Select retailer' : 'Walk-in Customer'}</option>{customerOptions.map((item) => <option key={item.uuid} value={item.uuid}>{item.name || item.shop_name} {item.phone ? `- ${item.phone}` : ''}</option>)}</select></label><label>Payment<select value={payment.payment_type} onChange={(e) => setPayment({ ...payment, payment_type: e.target.value })}><option value="cash">Cash</option><option value="credit">Credit</option><option value="partial">Partial</option></select></label><label>Discount<input type="number" value={payment.discount} onChange={(e) => setPayment({ ...payment, discount: e.target.value })} /></label><label>Tax<input type="number" value={payment.tax} onChange={(e) => setPayment({ ...payment, tax: e.target.value })} /></label><label>Paid<input data-paid-input type="number" value={payment.payment_type === 'credit' ? 0 : payment.paid || total} onChange={(e) => setPayment({ ...payment, paid: e.target.value })} /></label><label>Due Date<input type="date" value={payment.due_date} onChange={(e) => setPayment({ ...payment, due_date: e.target.value })} /></label></div><div className="totals"><span>Subtotal {money(subtotal)}</span><strong>Total {money(total)}</strong></div><div className="button-row"><button className="primary-btn" disabled={!cart.length} onClick={completeSale}><ReceiptText size={18} /> Save Sale</button><button className="ghost-btn" disabled={!cart.length} onClick={() => printInvoice(draftInvoice, cart, brand)}><Printer size={16} /> Print</button><button className="ghost-btn" disabled={!cart.length} onClick={() => downloadPdf('invoice.pdf', 'Sales Invoice', invoicePdfLines(draftInvoice, cart, brand))}><FileDown size={16} /> PDF</button><button className="ghost-btn" disabled={!cart.length} onClick={shareInvoiceOnWhatsApp}><MessageCircle size={16} /> WhatsApp</button></div></section></div>;
+  return <div className="pos-grid"><section className="panel"><div className="module-head"><h2>Modern POS</h2><span className="shortcut-pill"><Keyboard size={15} /> F1 New - F2 Customer - F3 Product - F4 Checkout - F5 Print</span></div><SearchBox value={query} onChange={setQuery} placeholder="Product search, barcode, SKU or serial" inputProps={{ 'data-product-search': true }} /><form className="inline-form" onSubmit={scanToCart}><input autoComplete="off" placeholder="Scan barcode / QR / SKU / IMEI" value={scan} onChange={(event) => setScan(event.target.value)} /><button className="primary-btn" disabled={!scan}><Plus size={15} /> Scan Add</button></form><div className="product-picker">{products.length ? products.map((product) => <button key={product.uuid} onClick={() => addToCart(product)}><div className="product-thumb">{product.image ? <img src={product.image} alt="" /> : <Smartphone size={22} />}</div><strong>{product.product_name}</strong><span>{product.barcode || product.secondary_barcode || product.sku || imeiListText(product)}</span><b>{money(product.sale_price)}</b><small>{product.quantity} in stock</small></button>) : <EmptyRows />}</div></section><section className="panel cart-panel"><h2>Quick Cart & Fast Checkout</h2><DataTable rows={cart} columns={['product_name', 'imei_numbers', 'quantity', 'price']} actions={(row) => <button className="danger-btn" onClick={() => setCart(cart.filter((item) => item.cart_key !== row.cart_key))}><Trash2 size={15} /></button>} editable={(row, key, value) => setCart(cart.map((item) => item.cart_key === row.cart_key ? { ...item, [key]: ['quantity', 'price'].includes(key) ? Number(value) : value } : item))} />{!isTraders && <div className="quick-customer"><strong>Quick Customer Entry</strong><div className="inline-form quick"><input placeholder="Name" value={quick.name} onChange={(e) => setQuick({ ...quick, name: e.target.value })} /><input placeholder="Phone" value={quick.phone} onChange={(e) => setQuick({ ...quick, phone: e.target.value })} /><input placeholder="Address" value={quick.address} onChange={(e) => setQuick({ ...quick, address: e.target.value })} /><input placeholder="CNIC" value={quick.cnic} onChange={(e) => setQuick({ ...quick, cnic: e.target.value })} /><input placeholder="Notes" value={quick.notes} onChange={(e) => setQuick({ ...quick, notes: e.target.value })} /><button className="ghost-btn" type="button" onClick={createWalkIn} disabled={!quick.name && !quick.phone}><Plus size={15} /> Create Customer</button></div></div>}<div className="form-grid"><label>{isTraders ? 'Retailer' : 'Customer'}<select data-customer-select value={payment.customer_uuid} onChange={(e) => setPayment({ ...payment, customer_uuid: e.target.value })}><option value="">{isTraders ? 'Select retailer' : 'Walk-in Customer'}</option>{customerOptions.map((item) => <option key={item.uuid} value={item.uuid}>{item.name || item.shop_name} {item.phone ? `- ${item.phone}` : ''}</option>)}</select></label><label>Payment<select value={payment.payment_type} onChange={(e) => setPayment({ ...payment, payment_type: e.target.value })}><option value="cash">Cash</option><option value="credit">Credit</option><option value="partial">Partial</option></select></label><label>Discount<input type="number" value={payment.discount} onChange={(e) => setPayment({ ...payment, discount: e.target.value })} /></label><label>Tax<input type="number" value={payment.tax} onChange={(e) => setPayment({ ...payment, tax: e.target.value })} /></label><label>Paid<input data-paid-input type="number" value={payment.payment_type === 'credit' ? 0 : payment.paid || total} onChange={(e) => setPayment({ ...payment, paid: e.target.value })} /></label><label>Due Date<input type="date" value={payment.due_date} onChange={(e) => setPayment({ ...payment, due_date: e.target.value })} /></label></div><div className="totals"><span>Subtotal {money(subtotal)}</span><strong>Total {money(total)}</strong></div><div className="button-row"><button className="primary-btn" disabled={!cart.length} onClick={completeSale}><ReceiptText size={18} /> Save Sale</button><button className="ghost-btn" disabled={!cart.length} onClick={() => printInvoice(draftInvoice, cart, brand)}><Printer size={16} /> Print</button><button className="ghost-btn" disabled={!cart.length} onClick={() => downloadPdf('invoice.pdf', 'Sales Invoice', invoicePdfLines(draftInvoice, cart, brand))}><FileDown size={16} /> PDF</button><button className="ghost-btn" disabled={!cart.length} onClick={shareInvoiceOnWhatsApp}><MessageCircle size={16} /> WhatsApp</button></div></section></div>;
 }
 
 function Credit({ data, refresh }) {
@@ -1564,13 +1621,43 @@ function Purchases({ data, refresh }) {
   function closeCreate() {
     setCreating(false);
   }
-  return <div className="stack"><section className="panel"><ModuleHeader title="Purchase Management" query={query} setQuery={setQuery} onAdd={() => setCreating(true)} onExport={() => exportCsv('purchases.csv', filtered)} onPrint={() => printTable('Purchases', filtered, ['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status'])} /><DataTable rows={filtered} columns={['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status']} onAdd={() => setCreating(true)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => printPurchaseReceipt(row)}><Printer size={15} /> Receipt</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Purchase Detail" row={viewing} columns={['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status', 'purchased_at']} onClose={() => setViewing(null)} />}{creating && <ModalShell onClose={closeCreate}><form onSubmit={submit}><div className="modal-header"><h2>Add Purchase</h2><button type="button" className="icon-btn" onClick={closeCreate} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Supplier<select value={form.supplier_uuid} onChange={(e) => setForm({ ...form, supplier_uuid: e.target.value })}><option value="">Select supplier</option>{(data.suppliers || []).map((supplier) => <option key={supplier.uuid} value={supplier.uuid}>{supplier.supplier_name}</option>)}</select></label><label>Invoice Number<input value={form.invoice_number} onChange={(e) => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Paid<input type="number" value={form.paid} onChange={(e) => setForm({ ...form, paid: e.target.value })} /></label></div><ProductLine products={data.products || []} onAdd={(item) => setCart([...cart, item])} /><DataTable rows={cart} columns={['product_name', 'imei_numbers', 'quantity', 'cost_price']} actions={(row) => <button type="button" className="danger-btn" onClick={() => setCart(cart.filter((item) => item !== row))}><Trash2 size={15} /></button>} /><div className="totals"><strong>Total {money(total)}</strong></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={closeCreate}>Cancel</button><button className="primary-btn" disabled={!cart.length}>Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="purchases" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  function addPurchaseLine(item) {
+    const cartKey = item.cart_key || `${item.product_uuid}:${item.imei_numbers || 'product'}`;
+    setCart((current) => {
+      const existing = current.find((row) => row.cart_key === cartKey);
+      if (!existing) return [...current, { ...item, cart_key: cartKey }];
+      return current.map((row) => row.cart_key === cartKey ? { ...row, quantity: Number(row.quantity || 0) + Number(item.quantity || 1), cost_price: item.cost_price || row.cost_price } : row);
+    });
+  }
+  return <div className="stack"><section className="panel"><ModuleHeader title="Purchase Management" query={query} setQuery={setQuery} onAdd={() => setCreating(true)} onExport={() => exportCsv('purchases.csv', filtered)} onPrint={() => printTable('Purchases', filtered, ['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status'])} /><DataTable rows={filtered} columns={['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status']} onAdd={() => setCreating(true)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => printPurchaseReceipt(row)}><Printer size={15} /> Receipt</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Purchase Detail" row={viewing} columns={['invoice_number', 'supplier_name', 'total', 'paid', 'balance', 'status', 'purchased_at']} onClose={() => setViewing(null)} />}{creating && <ModalShell onClose={closeCreate}><form onSubmit={submit}><div className="modal-header"><h2>Add Purchase</h2><button type="button" className="icon-btn" onClick={closeCreate} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Supplier<select value={form.supplier_uuid} onChange={(e) => setForm({ ...form, supplier_uuid: e.target.value })}><option value="">Select supplier</option>{(data.suppliers || []).map((supplier) => <option key={supplier.uuid} value={supplier.uuid}>{supplier.supplier_name}</option>)}</select></label><label>Invoice Number<input value={form.invoice_number} onChange={(e) => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Paid<input type="number" value={form.paid} onChange={(e) => setForm({ ...form, paid: e.target.value })} /></label></div><ProductLine products={data.products || []} data={data} onAdd={addPurchaseLine} /><DataTable rows={cart} columns={['product_name', 'imei_numbers', 'quantity', 'cost_price']} actions={(row) => <button type="button" className="danger-btn" onClick={() => setCart(cart.filter((item) => item.cart_key !== row.cart_key))}><Trash2 size={15} /></button>} /><div className="totals"><strong>Total {money(total)}</strong></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={closeCreate}>Cancel</button><button className="primary-btn" disabled={!cart.length}>Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="purchases" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
-function ProductLine({ products, onAdd }) {
+function ProductLine({ products, onAdd, data }) {
   const [line, setLine] = useState({ product_uuid: '', quantity: 1, cost_price: 0, imei_numbers: '' });
+  const [scan, setScan] = useState('');
   const product = products.find((item) => item.uuid === line.product_uuid);
-  return <div className="inline-form"><select value={line.product_uuid} onChange={(e) => setLine({ ...line, product_uuid: e.target.value })}><option value="">Product</option>{products.map((item) => <option key={item.uuid} value={item.uuid}>{item.product_name}</option>)}</select><input type="number" value={line.quantity} onChange={(e) => setLine({ ...line, quantity: e.target.value })} /><input type="number" value={line.cost_price} onChange={(e) => setLine({ ...line, cost_price: e.target.value })} /><input placeholder="IMEI numbers" value={line.imei_numbers} onChange={(e) => setLine({ ...line, imei_numbers: e.target.value })} /><button className="ghost-btn" onClick={() => product && onAdd({ ...line, product_name: product.product_name })}><Plus size={15} /> Add</button></div>;
+  async function scanProduct(event) {
+    event.preventDefault();
+    try {
+      const match = await barcodeLookup(scan, data || { products });
+      if (!match.product?.uuid) {
+        notify('Scanned item is in catalog only. Add it to inventory first.');
+        return;
+      }
+      onAdd({
+        cart_key: match.imei?.uuid || `${match.product.uuid}:${match.match_type || 'scan'}`,
+        product_uuid: match.product.uuid,
+        product_name: match.product.product_name,
+        quantity: Math.max(1, Number(match.quantity_multiplier || 1)),
+        cost_price: Number(match.product.purchase_price || match.product.cost_price || 0),
+        imei_numbers: match.imei ? imeiListText(match.imei) : '',
+      });
+      setScan('');
+    } catch (error) {
+      notify(error.message || 'Purchase scan failed');
+    }
+  }
+  return <div className="stack compact"><form className="inline-form" onSubmit={scanProduct}><input autoComplete="off" placeholder="Scan barcode / QR / SKU / IMEI" value={scan} onChange={(event) => setScan(event.target.value)} /><button className="ghost-btn" disabled={!scan}><Plus size={15} /> Add Scan</button></form><div className="inline-form"><select value={line.product_uuid} onChange={(e) => setLine({ ...line, product_uuid: e.target.value })}><option value="">Product</option>{products.map((item) => <option key={item.uuid} value={item.uuid}>{item.product_name}</option>)}</select><input type="number" value={line.quantity} onChange={(e) => setLine({ ...line, quantity: e.target.value })} /><input type="number" value={line.cost_price} onChange={(e) => setLine({ ...line, cost_price: e.target.value })} /><input placeholder="IMEI numbers" value={line.imei_numbers} onChange={(e) => setLine({ ...line, imei_numbers: e.target.value })} /><button type="button" className="ghost-btn" onClick={() => product && onAdd({ ...line, cart_key: `${line.product_uuid}:${line.imei_numbers || 'manual'}`, product_name: product.product_name })}><Plus size={15} /> Add</button></div></div>;
 }
 
 function Notifications({ data, refresh, auth }) {
