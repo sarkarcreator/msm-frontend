@@ -182,7 +182,7 @@ const RESOURCES = {
   products: {
     title: 'Inventory Management',
     store: 'products',
-    search: ['product_name', 'category', 'brand', 'model', 'sku', 'product_code', 'imei', 'imei_numbers', 'barcode', 'secondary_barcode', 'qr_code', 'box_barcode', 'carton_barcode', 'batch_number', 'status'],
+    search: ['display_name', 'product_name', 'category', 'brand', 'model', 'pack_size', 'unit', 'variant_type', 'sku', 'product_code', 'imei', 'imei_numbers', 'barcode', 'secondary_barcode', 'qr_code', 'box_barcode', 'carton_barcode', 'batch_number', 'status'],
     columns: ['product_name', 'category', 'brand', 'imei_numbers', 'unit', 'package_quantity', 'units_per_package', 'quantity', 'purchase_price', 'package_cost_price', 'total_cost', 'sale_price', 'low_stock_threshold', 'status'],
     rowMap: inventoryRows,
     fields: [
@@ -832,10 +832,43 @@ function inventoryRows(rows) {
     const threshold = Number(row.low_stock_threshold || 3);
     return {
       ...row,
+      display_name: productDisplayName(row),
       imei: row.imei || row.barcode || row.serial || '',
       status: qty <= 0 ? 'Out of Stock' : qty <= threshold ? 'Low Stock' : 'In Stock',
     };
   });
+}
+
+function productDisplayName(record = {}) {
+  const baseName = record.product_name || record.name || record.brand_name || record.generic_name || record.model || '';
+  const parts = [];
+  const add = (value) => {
+    const text = String(value || '').trim();
+    if (!text) return;
+    const normalized = text.toLowerCase();
+    const genericUnits = new Set(['single unit', 'unit', 'pcs', 'pc', 'piece', 'pieces']);
+    if (genericUnits.has(normalized) && parts.length) return;
+    if (parts.some((part) => part.toLowerCase() === normalized)) return;
+    if (parts.some((part) => part.toLowerCase().includes(normalized)) && normalized.length > 2) return;
+    if (parts.some((part) => normalized.includes(part.toLowerCase()) && part.length > 2)) {
+      for (let index = parts.length - 1; index >= 0; index -= 1) {
+        if (normalized.includes(parts[index].toLowerCase()) && parts[index].length > 2) parts.splice(index, 1);
+      }
+    }
+    parts.push(text);
+  };
+
+  add(record.brand || record.manufacturer);
+  add(baseName);
+  add(record.model);
+  add(record.storage || record.memory);
+  add(record.color);
+  add(record.pack_size || record.strength);
+  add(record.unit || record.dosage_form);
+  add(record.variant || record.variant_name);
+  add(record.variant_type);
+
+  return parts.join(' ') || 'Product';
 }
 
 function sameDayLocal(value) {
@@ -1346,7 +1379,7 @@ function Inventory({ rows, brand, refresh }) {
   }
 
   const edit = calculatedProduct(editing || blank);
-  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><form className="inline-form" onSubmit={receiveScan}><UniversalProductLookup autoFocus value={receiving.scan} data={{ products: rows }} onChange={(value) => { setReceiving({ ...receiving, scan: value }); setReceivingMatch(null); }} onPick={(match) => { setReceivingMatch(match); setReceiving({ ...receiving, scan: match.product?.barcode || match.product?.sku || match.product?.product_name || receiving.scan, cost_price: receiving.cost_price || match.product?.purchase_price || '' }); }} /><input type="number" min="1" value={receiving.quantity} onChange={(event) => setReceiving({ ...receiving, quantity: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Cost" value={receiving.cost_price} onChange={(event) => setReceiving({ ...receiving, cost_price: event.target.value })} /><input placeholder="Batch" value={receiving.batch_number} onChange={(event) => setReceiving({ ...receiving, batch_number: event.target.value })} /><input type="date" value={receiving.expiry_date} onChange={(event) => setReceiving({ ...receiving, expiry_date: event.target.value })} /><button className="ghost-btn" disabled={!receiving.scan}><Plus size={15} /> Receive Scan</button></form>{receivingMatch?.product && <div className="lookup-selected"><strong>{receivingMatch.product.product_name}</strong><span>{receivingMatch.product.brand || 'No brand'} - {receivingMatch.product.category || 'No category'} - {receivingMatch.product.unit || 'Unit'} - Stock {receivingMatch.product.quantity || 0} - {money(receivingMatch.product.sale_price || 0)}</span></div>}<input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(calculatedProduct(row))}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Product Detail" row={viewing} columns={[...columns, 'barcode', 'secondary_barcode', 'qr_code', 'product_code', 'box_barcode', 'carton_barcode', 'sku', 'variant_type', 'pack_size', 'batch_number', 'expiry_date', 'imei_numbers', 'manufacturer', 'warranty', 'supplier_name']} onClose={() => setViewing(null)} />}{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={edit.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={edit.category || categoryOptions[0]} onChange={(event) => change('category', event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={edit.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label><label>SKU<input value={edit.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Product Code<input value={edit.product_code || ''} onChange={(event) => change('product_code', event.target.value)} /></label><label>Barcode<input value={edit.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Secondary Barcode<input value={edit.secondary_barcode || ''} onChange={(event) => change('secondary_barcode', event.target.value)} /></label><label>QR Code<input value={edit.qr_code || ''} onChange={(event) => change('qr_code', event.target.value)} /></label><label>Box Barcode<input value={edit.box_barcode || ''} onChange={(event) => change('box_barcode', event.target.value)} /></label><label>Carton Barcode<input value={edit.carton_barcode || ''} onChange={(event) => change('carton_barcode', event.target.value)} /></label><label>Unit<select value={edit.unit || 'Single Unit'} onChange={(event) => change('unit', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Variant Type<select value={edit.variant_type || edit.unit || 'Single Unit'} onChange={(event) => change('variant_type', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Pack Size<input value={edit.pack_size || ''} onChange={(event) => change('pack_size', event.target.value)} /></label><label>Boxes / Packs Qty<input type="number" min="0" value={edit.package_quantity || 0} onChange={(event) => change('package_quantity', event.target.value)} /></label><label>Pcs Per Box / Pack<input type="number" min="1" value={edit.units_per_package || 1} onChange={(event) => change('units_per_package', event.target.value)} /></label><label>Loose Pcs<input type="number" min="0" value={edit.loose_quantity || 0} onChange={(event) => change('loose_quantity', event.target.value)} /></label><label>Total Stock Pcs<input type="number" readOnly value={edit.quantity || 0} /></label><label>Cost Per Pc<input type="number" min="0" step="0.01" value={edit.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label><label>Cost Per Box / Pack<input type="number" readOnly value={edit.package_cost_price || 0} /></label><label>Total Cost<input type="number" readOnly value={edit.total_cost || 0} /></label><label>Sale Price Per Pc<input type="number" min="0" step="0.01" value={edit.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Low Stock Warning<input type="number" min="0" value={edit.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label><label>Batch Number<input value={edit.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label><label>Expiry Date<input type="date" value={edit.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label><label>IMEI Numbers<textarea rows="3" value={imeiListText(edit)} onChange={(event) => { change('imei_numbers', event.target.value); change('imei', event.target.value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)[0] || ''); }} /></label><label>Manufacturer<input value={edit.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label><label>Warranty<input value={edit.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label><label>Supplier<input value={edit.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div><div className="totals inventory-total"><span>Total Stock: <strong>{edit.quantity || 0} pcs</strong></span><span>Per Box Cost: <strong>{money(edit.package_cost_price)}</strong></span><span>Total Cost: <strong>{money(edit.total_cost)}</strong></span></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><form className="inline-form" onSubmit={receiveScan}><UniversalProductLookup autoFocus value={receiving.scan} data={{ products: rows }} onChange={(value) => { setReceiving({ ...receiving, scan: value }); setReceivingMatch(null); }} onPick={(match) => { setReceivingMatch(match); setReceiving({ ...receiving, scan: match.product?.barcode || match.product?.sku || productDisplayName(match.product) || receiving.scan, cost_price: receiving.cost_price || match.product?.purchase_price || '' }); }} /><input type="number" min="1" value={receiving.quantity} onChange={(event) => setReceiving({ ...receiving, quantity: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Cost" value={receiving.cost_price} onChange={(event) => setReceiving({ ...receiving, cost_price: event.target.value })} /><input placeholder="Batch" value={receiving.batch_number} onChange={(event) => setReceiving({ ...receiving, batch_number: event.target.value })} /><input type="date" value={receiving.expiry_date} onChange={(event) => setReceiving({ ...receiving, expiry_date: event.target.value })} /><button className="ghost-btn" disabled={!receiving.scan}><Plus size={15} /> Receive Scan</button></form>{receivingMatch?.product && <div className="lookup-selected"><strong>{productDisplayName(receivingMatch.product)}</strong><span>{receivingMatch.product.brand || 'No brand'} - {receivingMatch.product.category || 'No category'} - {receivingMatch.product.unit || 'Unit'} - Stock {receivingMatch.product.quantity || 0} - {money(receivingMatch.product.sale_price || 0)}</span></div>}<input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(calculatedProduct(row))}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Product Detail" row={viewing} columns={[...columns, 'barcode', 'secondary_barcode', 'qr_code', 'product_code', 'box_barcode', 'carton_barcode', 'sku', 'variant_type', 'pack_size', 'batch_number', 'expiry_date', 'imei_numbers', 'manufacturer', 'warranty', 'supplier_name']} onClose={() => setViewing(null)} />}{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={edit.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={edit.category || categoryOptions[0]} onChange={(event) => change('category', event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={edit.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label><label>SKU<input value={edit.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Product Code<input value={edit.product_code || ''} onChange={(event) => change('product_code', event.target.value)} /></label><label>Barcode<input value={edit.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Secondary Barcode<input value={edit.secondary_barcode || ''} onChange={(event) => change('secondary_barcode', event.target.value)} /></label><label>QR Code<input value={edit.qr_code || ''} onChange={(event) => change('qr_code', event.target.value)} /></label><label>Box Barcode<input value={edit.box_barcode || ''} onChange={(event) => change('box_barcode', event.target.value)} /></label><label>Carton Barcode<input value={edit.carton_barcode || ''} onChange={(event) => change('carton_barcode', event.target.value)} /></label><label>Unit<select value={edit.unit || 'Single Unit'} onChange={(event) => change('unit', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Variant Type<select value={edit.variant_type || edit.unit || 'Single Unit'} onChange={(event) => change('variant_type', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Pack Size<input value={edit.pack_size || ''} onChange={(event) => change('pack_size', event.target.value)} /></label><label>Boxes / Packs Qty<input type="number" min="0" value={edit.package_quantity || 0} onChange={(event) => change('package_quantity', event.target.value)} /></label><label>Pcs Per Box / Pack<input type="number" min="1" value={edit.units_per_package || 1} onChange={(event) => change('units_per_package', event.target.value)} /></label><label>Loose Pcs<input type="number" min="0" value={edit.loose_quantity || 0} onChange={(event) => change('loose_quantity', event.target.value)} /></label><label>Total Stock Pcs<input type="number" readOnly value={edit.quantity || 0} /></label><label>Cost Per Pc<input type="number" min="0" step="0.01" value={edit.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label><label>Cost Per Box / Pack<input type="number" readOnly value={edit.package_cost_price || 0} /></label><label>Total Cost<input type="number" readOnly value={edit.total_cost || 0} /></label><label>Sale Price Per Pc<input type="number" min="0" step="0.01" value={edit.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Low Stock Warning<input type="number" min="0" value={edit.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label><label>Batch Number<input value={edit.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label><label>Expiry Date<input type="date" value={edit.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label><label>IMEI Numbers<textarea rows="3" value={imeiListText(edit)} onChange={(event) => { change('imei_numbers', event.target.value); change('imei', event.target.value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)[0] || ''); }} /></label><label>Manufacturer<input value={edit.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label><label>Warranty<input value={edit.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label><label>Supplier<input value={edit.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div><div className="totals inventory-total"><span>Total Stock: <strong>{edit.quantity || 0} pcs</strong></span><span>Per Box Cost: <strong>{money(edit.package_cost_price)}</strong></span><span>Total Cost: <strong>{money(edit.total_cost)}</strong></span></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function calculatedProduct(record) {
@@ -1480,7 +1513,10 @@ function lookupTitle(match = {}) {
   const product = match.product || {};
   const medicine = match.medicine || {};
   const catalog = match.catalog || {};
-  return product.product_name || medicine.brand_name || catalog.product_name || catalog.name || 'Matched item';
+  if (product.uuid || product.product_name) return productDisplayName(product);
+  if (medicine.uuid || medicine.brand_name) return productDisplayName({ product_name: medicine.brand_name, brand: medicine.manufacturer || medicine.generic_name, pack_size: medicine.strength, unit: medicine.dosage_form });
+  if (catalog.uuid || catalog.product_name || catalog.name) return productDisplayName(catalog);
+  return 'Matched item';
 }
 
 function lookupMeta(match = {}) {
@@ -1558,7 +1594,7 @@ function POS2({ data, brand, refresh }) {
       : [...items, {
         cart_key: cartKey,
         product_uuid: product.uuid,
-        product_name: product.product_name,
+        product_name: productDisplayName(product),
         ...(usesImeiTracking ? { imei_uuid: match.imei?.uuid, imei: match.imei?.imei_1 || product.imei, imei_numbers: match.imei ? imeiListText(match.imei) : imeiListText(product) } : {}),
         quantity,
         price: Number(product.sale_price || 0),
@@ -1573,7 +1609,7 @@ function POS2({ data, brand, refresh }) {
       }
       addToCart(match.product, match);
       setScan('');
-      notify(`Added ${match.product.product_name}`);
+      notify(`Added ${productDisplayName(match.product)}`);
     } catch (error) {
       notify(error.message || 'Barcode scan failed');
     }
@@ -1629,7 +1665,7 @@ function POS2({ data, brand, refresh }) {
           {products.length ? products.map((product) => (
             <button key={product.uuid} onClick={() => addToCart(product)}>
               <div className="product-thumb">{product.image ? <img src={product.image} alt="" /> : <Smartphone size={22} />}</div>
-              <strong>{product.product_name}</strong>
+              <strong>{productDisplayName(product)}</strong>
               <span>{product.barcode || product.secondary_barcode || product.sku || product.product_code || imeiListText(product)}</span>
               <b>{money(product.sale_price)}</b>
               <small>{product.quantity} in stock</small>
@@ -1825,7 +1861,7 @@ function ProductLine({ products, onAdd, data }) {
       onAdd({
         cart_key: match.imei?.uuid || `${match.product.uuid}:${match.match_type || 'scan'}`,
         product_uuid: match.product.uuid,
-        product_name: match.product.product_name,
+        product_name: productDisplayName(match.product),
         quantity: Math.max(1, Number(match.quantity_multiplier || 1)),
         cost_price: Number(match.product.purchase_price || match.product.cost_price || 0),
         imei_numbers: match.imei ? imeiListText(match.imei) : '',
@@ -1836,7 +1872,7 @@ function ProductLine({ products, onAdd, data }) {
       notify(error.message || 'Purchase scan failed');
     }
   }
-  return <div className="stack compact"><UniversalProductLookup value={scan} data={data || { products }} onChange={setScan} onPick={addScannedProduct} /><div className="inline-form"><select value={line.product_uuid} onChange={(e) => setLine({ ...line, product_uuid: e.target.value })}><option value="">Product</option>{products.map((item) => <option key={item.uuid} value={item.uuid}>{item.product_name}</option>)}</select><input type="number" value={line.quantity} onChange={(e) => setLine({ ...line, quantity: e.target.value })} /><input type="number" value={line.cost_price} onChange={(e) => setLine({ ...line, cost_price: e.target.value })} /><input placeholder="IMEI numbers" value={line.imei_numbers} onChange={(e) => setLine({ ...line, imei_numbers: e.target.value })} /><button type="button" className="ghost-btn" onClick={() => product && onAdd({ ...line, cart_key: `${line.product_uuid}:${line.imei_numbers || 'manual'}`, product_name: product.product_name })}><Plus size={15} /> Add</button></div></div>;
+  return <div className="stack compact"><UniversalProductLookup value={scan} data={data || { products }} onChange={setScan} onPick={addScannedProduct} /><div className="inline-form"><select value={line.product_uuid} onChange={(e) => setLine({ ...line, product_uuid: e.target.value })}><option value="">Product</option>{products.map((item) => <option key={item.uuid} value={item.uuid}>{productDisplayName(item)}</option>)}</select><input type="number" value={line.quantity} onChange={(e) => setLine({ ...line, quantity: e.target.value })} /><input type="number" value={line.cost_price} onChange={(e) => setLine({ ...line, cost_price: e.target.value })} /><input placeholder="IMEI numbers" value={line.imei_numbers} onChange={(e) => setLine({ ...line, imei_numbers: e.target.value })} /><button type="button" className="ghost-btn" onClick={() => product && onAdd({ ...line, cart_key: `${line.product_uuid}:${line.imei_numbers || 'manual'}`, product_name: productDisplayName(product) })}><Plus size={15} /> Add</button></div></div>;
 }
 
 function Notifications({ data, refresh, auth }) {
@@ -2144,7 +2180,7 @@ function DataTable({ rows, columns, actions, editable, onAdd }) {
   function toggleSort(column) {
     setSort((current) => current.key === column ? { key: column, dir: current.dir === 'asc' ? 'desc' : 'asc' } : { key: column, dir: 'asc' });
   }
-  return <div className="data-table"><div className="table-wrap"><table><thead><tr>{columns.map((column) => <th key={column}><button className="sort-head" onClick={() => toggleSort(column)}>{headerLabel(column)}<span>{sort.key === column ? (sort.dir === 'asc' ? '^' : 'v') : '-'}</span></button></th>)}{actions && <th className="actions-head">Actions</th>}</tr></thead><tbody>{pageRows.length ? pageRows.map((row, index) => <tr key={row.uuid || index}>{columns.map((column) => <td key={column} title={String(row[column] ?? '')}>{editable && ['quantity', 'price'].includes(column) ? <input className="cell-input" type="number" value={row[column]} onChange={(e) => editable(row, column, e.target.value)} /> : format(row[column], column)}</td>)}{actions && <td className="actions-cell"><div className="row-actions">{actions(row)}</div></td>}</tr>) : <tr><td colSpan={columns.length + (actions ? 1 : 0)}><EmptyRows onAdd={onAdd} /></td></tr>}</tbody></table></div><div className="table-footer"><span>Showing {start}-{end} of {total} records</span><div className="pagination"><button className="ghost-btn" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>Previous</button><span>Page {safePage} / {pages}</span><button className="ghost-btn" disabled={safePage >= pages} onClick={() => setPage(safePage + 1)}>Next</button></div></div></div>;
+  return <div className="data-table"><div className="table-wrap"><table><thead><tr>{columns.map((column) => <th key={column}><button className="sort-head" onClick={() => toggleSort(column)}>{headerLabel(column)}<span>{sort.key === column ? (sort.dir === 'asc' ? '^' : 'v') : '-'}</span></button></th>)}{actions && <th className="actions-head">Actions</th>}</tr></thead><tbody>{pageRows.length ? pageRows.map((row, index) => <tr key={row.uuid || index}>{columns.map((column) => <td key={column} title={String(displayCellValue(row, column) ?? '')}>{editable && ['quantity', 'price'].includes(column) ? <input className="cell-input" type="number" value={row[column]} onChange={(e) => editable(row, column, e.target.value)} /> : format(row[column], column, row)}</td>)}{actions && <td className="actions-cell"><div className="row-actions">{actions(row)}</div></td>}</tr>) : <tr><td colSpan={columns.length + (actions ? 1 : 0)}><EmptyRows onAdd={onAdd} /></td></tr>}</tbody></table></div><div className="table-footer"><span>Showing {start}-{end} of {total} records</span><div className="pagination"><button className="ghost-btn" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>Previous</button><span>Page {safePage} / {pages}</span><button className="ghost-btn" disabled={safePage >= pages} onClick={() => setPage(safePage + 1)}>Next</button></div></div></div>;
 }
 
 function List({ title, rows, cols }) {
@@ -2723,7 +2759,12 @@ function money(value) {
   return new Intl.NumberFormat('en-PK', { style: 'currency', currency: 'PKR', maximumFractionDigits: 0 }).format(Number(value || 0));
 }
 
-function format(value, key) {
+function displayCellValue(row = {}, key) {
+  return key === 'product_name' ? productDisplayName(row) : row[key];
+}
+
+function format(value, key, row = {}) {
+  if (key === 'product_name') return productDisplayName(row);
   if (key === 'imei_numbers') return imeiListText({ imei_numbers: value });
   if (key === 'status') return <span className={`status-tag ${statusClass(value)}`}>{String(value ?? '')}</span>;
   if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'registration_fee', 'doctor_fee', 'medicine_charges', 'injection_charges', 'lab_charges', 'radiology_charges', 'procedure_charges', 'grand_total', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent', 'available', 'cash_in', 'sent', 'pending', 'fee_profit', 'mrp'].includes(key)) return money(value);
@@ -2759,11 +2800,12 @@ function statusClass(value) {
 }
 
 function printTable(title, rows, columns, brand = window.__msmBrand || {}) {
-  const html = `<div class="brand">${shopDisplayName(brand)}</div><h2>${title}</h2><table><thead><tr>${columns.map((col) => `<th>${headerLabel(col)}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${columns.map((col) => `<td>${printableFormat(row[col], col)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  const html = `<div class="brand">${shopDisplayName(brand)}</div><h2>${title}</h2><table><thead><tr>${columns.map((col) => `<th>${headerLabel(col)}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${columns.map((col) => `<td>${printableFormat(row[col], col, row)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   printHtml(title, html);
 }
 
-function printableFormat(value, key) {
+function printableFormat(value, key, row = {}) {
+  if (key === 'product_name') return productDisplayName(row);
   if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'registration_fee', 'doctor_fee', 'medicine_charges', 'injection_charges', 'lab_charges', 'radiology_charges', 'procedure_charges', 'grand_total', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent', 'available', 'cash_in', 'sent', 'pending', 'fee_profit', 'mrp'].includes(key)) return money(value);
   if (String(key).includes('_at') && value) return new Date(value).toLocaleString();
   if (['visit_date', 'next_visit', 'delivery_date', 'expiry_date', 'due_date'].includes(key) && value) return new Date(value).toLocaleDateString();
@@ -2771,12 +2813,12 @@ function printableFormat(value, key) {
 }
 
 function legacyPrintInvoice(sale, cart, brand = window.__msmBrand || {}) {
-  const html = `<div class="brand">${shopDisplayName(brand)}</div><h2>Invoice ${sale.invoice_number}</h2><p>${sale.customer_name} - ${new Date(sale.sold_at).toLocaleString()}</p><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.map((item) => `<tr><td>${item.product_name}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('')}</tbody></table><h3 class="right">Total: ${money(sale.total)}</h3><p>Paid: ${money(sale.paid)} | Balance: ${money(sale.balance)}</p>`;
+  const html = `<div class="brand">${shopDisplayName(brand)}</div><h2>Invoice ${sale.invoice_number}</h2><p>${sale.customer_name} - ${new Date(sale.sold_at).toLocaleString()}</p><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.map((item) => `<tr><td>${productDisplayName(item)}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('')}</tbody></table><h3 class="right">Total: ${money(sale.total)}</h3><p>Paid: ${money(sale.paid)} | Balance: ${money(sale.balance)}</p>`;
   printHtml(`Invoice ${sale.invoice_number}`, html);
 }
 
 function printBarcode(product) {
-  printHtml('Barcode', `<div class="brand">MSM</div><h2>${product.product_name}</h2><svg id="barcode"></svg><p>${product.barcode || product.sku || product.imei || product.uuid}</p>`);
+  printHtml('Barcode', `<div class="brand">MSM</div><h2>${productDisplayName(product)}</h2><svg id="barcode"></svg><p>${product.barcode || product.sku || product.imei || product.uuid}</p>`);
 }
 
 function printLedger(party, ledgers, key = 'customer_uuid') {
@@ -2842,7 +2884,7 @@ function printInvoice(sale, cart = [], brand = {}, format = 'a4') {
   const settlement = payment.changeReturn > 0
     ? `<p><strong>Change Return:</strong> ${money(payment.changeReturn)}</p>`
     : `<p><strong>Due Amount:</strong> ${money(payment.dueAmount)}</p>`;
-  const html = `<section class="receipt-shell ${receiptFormatClass(format)}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p><strong>Invoice Number:</strong> ${sale.invoice_number || ''}</p><p><strong>Customer:</strong> ${sale.customer_name || 'Walk-in Customer'}</p><p><strong>Date:</strong> ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>IMEI / Serial</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${item.product_name}</td><td>${imeiListText(item)}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('') : `<tr><td colspan="4">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Grand Total: ${money(payment.total)}</h3><p><strong>Payment Method:</strong> ${payment.method}</p><p><strong>Paid Amount:</strong> ${money(payment.paid)}</p>${settlement}<p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
+  const html = `<section class="receipt-shell ${receiptFormatClass(format)}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p><strong>Invoice Number:</strong> ${sale.invoice_number || ''}</p><p><strong>Customer:</strong> ${sale.customer_name || 'Walk-in Customer'}</p><p><strong>Date:</strong> ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>IMEI / Serial</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${productDisplayName(item)}</td><td>${imeiListText(item)}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('') : `<tr><td colspan="4">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Grand Total: ${money(payment.total)}</h3><p><strong>Payment Method:</strong> ${payment.method}</p><p><strong>Paid Amount:</strong> ${money(payment.paid)}</p>${settlement}<p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
   printHtml(`Invoice ${sale.invoice_number}`, html);
 }
 
@@ -2883,7 +2925,7 @@ function invoicePdfLines(invoice, cart, brand = {}) {
     brand?.contact_number || '',
     `Invoice Number: ${invoice.invoice_number}`,
     `Customer Name: ${invoice.customer_name || 'Walk-in Customer'}`,
-    ...cart.map((item) => `${item.product_name} x ${item.quantity} - ${money(Number(item.quantity) * Number(item.price))}${imeiListText(item) ? ` | IMEI: ${imeiListText(item)}` : ''}`),
+    ...cart.map((item) => `${productDisplayName(item)} x ${item.quantity} - ${money(Number(item.quantity) * Number(item.price))}${imeiListText(item) ? ` | IMEI: ${imeiListText(item)}` : ''}`),
     `Subtotal: ${money(invoice.subtotal)}`,
     `Discount: ${money(invoice.discount)}`,
     `Tax: ${money(invoice.tax)}`,
@@ -2899,7 +2941,7 @@ function invoiceMessage(invoice, brand = {}, cart = []) {
   const payment = paymentDisplay(invoice);
   const items = cart.length ? `\nItems:\n${cart.map((item) => {
     const imei = imeiListText(item);
-    return `- ${item.product_name} x ${item.quantity || 1} @ ${money(item.price || 0)}${imei ? `\n  IMEI: ${imei}` : ''}`;
+    return `- ${productDisplayName(item)} x ${item.quantity || 1} @ ${money(item.price || 0)}${imei ? `\n  IMEI: ${imei}` : ''}`;
   }).join('\n')}` : '';
   const status = invoice.status || (payment.dueAmount > 0 ? 'Credit Due' : 'Paid');
   const settlement = payment.changeReturn > 0 ? `Change Return: ${money(payment.changeReturn)}` : `Due Amount: ${money(payment.dueAmount)}`;
