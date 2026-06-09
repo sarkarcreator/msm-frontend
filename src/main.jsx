@@ -1486,14 +1486,18 @@ function POS2({ data, brand, refresh }) {
   const [cart, setCart] = useState([]);
   const [payment, setPayment] = useState({ customer_uuid: '', payment_type: 'cash', discount: 0, tax: brand?.tax || 0, paid: 0, due_date: '' });
   const [quick, setQuick] = useState({ name: '', phone: '', address: '', cnic: '', notes: '' });
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const [receiptFormat, setReceiptFormat] = useState(brand?.receipt_format || '80mm');
   const isTraders = businessTypeKey(brand?.business_type) === 'traders';
   const products = filterRows(data.products || [], query, ['product_name', 'barcode', 'secondary_barcode', 'qr_code', 'box_barcode', 'carton_barcode', 'sku', 'imei', 'imei_numbers', 'brand', 'model', 'batch_number']);
   const customerOptions = isTraders ? (data.trader_retailers || []).map((item) => ({ ...item, name: item.shop_name || item.owner_name })) : (data.customers || []);
   const customer = customerOptions.find((item) => item.uuid === payment.customer_uuid);
   const subtotal = cart.reduce((sum, item) => sum + Number(item.quantity) * Number(item.price), 0);
   const total = subtotal - Number(payment.discount || 0) + Number(payment.tax || 0);
-  const paid = payment.payment_type === 'credit' ? 0 : Number(payment.paid || total);
-  const draftInvoice = { invoice_number: 'DRAFT', customer_name: customer?.name || quick.name || 'Walk-in Customer', subtotal, discount: payment.discount, tax: payment.tax, total, paid, balance: Math.max(0, total - paid), sold_at: new Date().toISOString() };
+  const paid = payment.payment_type === 'credit' ? 0 : Number(payment.paid === '' ? total : payment.paid || total);
+  const changeReturn = Math.max(0, paid - total);
+  const dueAmount = Math.max(0, total - paid);
+  const draftInvoice = { invoice_number: 'DRAFT', customer_name: customer?.name || quick.name || 'Walk-in Customer', subtotal, discount: payment.discount, tax: payment.tax, total, paid, balance: dueAmount, sold_at: new Date().toISOString() };
   const usesImeiTracking = businessTypeKey(brand?.business_type) === 'mobile_shop';
 
   function addToCart(product, match = {}) {
@@ -1531,30 +1535,22 @@ function POS2({ data, brand, refresh }) {
     setCart([]);
     setPayment({ customer_uuid: '', payment_type: 'cash', discount: 0, tax: brand?.tax || 0, paid: 0, due_date: '' });
     await refresh();
-    printInvoice(sale, cart, brand);
+    printInvoice(sale, cart, brand, receiptFormat);
   }
 
   async function createWalkIn() {
     const customerRecord = await quickCustomer(quick);
     setPayment({ ...payment, customer_uuid: customerRecord.uuid });
     setQuick({ name: '', phone: '', address: '', cnic: '', notes: '' });
+    setCustomerOpen(false);
     await refresh();
   }
 
   function shareInvoiceOnWhatsApp() {
     const phone = quick.phone || customer?.phone || customer?.whatsapp || customer?.contact_number;
-    console.info('WhatsApp validation result', {
-      hasCustomerPhone: Boolean(phone),
-      input: phone || '',
-      normalized: normalizePakistanPhone(phone),
-    });
-    const result = whatsAppShare(phone, invoiceMessage(draftInvoice, brand, cart));
-    if (result) {
-      console.info('WhatsApp phone normalization result', {
-        input: phone,
-        normalized: result.normalizedPhone,
-      });
-    }
+    const message = `${invoiceMessage(draftInvoice, brand, cart)}\n\nPDF Bill: use PDF Bill button and attach the downloaded invoice if needed.`;
+    const result = whatsAppShare(phone, message);
+    if (result) console.info('WhatsApp phone normalization result', { input: phone, normalized: result.normalizedPhone });
   }
 
   useEffect(() => {
@@ -1563,13 +1559,88 @@ function POS2({ data, brand, refresh }) {
       if (event.key === 'F2') { event.preventDefault(); document.querySelector('[data-customer-select]')?.focus(); }
       if (event.key === 'F3') { event.preventDefault(); document.querySelector('[data-product-search]')?.focus(); }
       if (event.key === 'F4') { event.preventDefault(); document.querySelector('[data-paid-input]')?.focus(); }
-      if (event.key === 'F5') { event.preventDefault(); if (cart.length) printInvoice(draftInvoice, cart, brand); }
+      if (event.key === 'F5') { event.preventDefault(); if (cart.length) printInvoice(draftInvoice, cart, brand, receiptFormat); }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, payment, quick, brand]);
+  }, [cart, payment, quick, brand, receiptFormat]);
 
-  return <div className="pos-grid"><section className="panel"><div className="module-head"><h2>Modern POS</h2><span className="shortcut-pill"><Keyboard size={15} /> F1 New - F2 Customer - F3 Product - F4 Checkout - F5 Print</span></div><SearchBox value={query} onChange={setQuery} placeholder="Product search, barcode, SKU or serial" inputProps={{ 'data-product-search': true }} /><UniversalProductLookup autoFocus value={scan} data={data} onChange={setScan} onPick={scanToCart} /><div className="product-picker">{products.length ? products.map((product) => <button key={product.uuid} onClick={() => addToCart(product)}><div className="product-thumb">{product.image ? <img src={product.image} alt="" /> : <Smartphone size={22} />}</div><strong>{product.product_name}</strong><span>{product.barcode || product.secondary_barcode || product.sku || product.product_code || imeiListText(product)}</span><b>{money(product.sale_price)}</b><small>{product.quantity} in stock</small></button>) : <EmptyRows />}</div></section><section className="panel cart-panel"><h2>Quick Cart & Fast Checkout</h2><DataTable rows={cart} columns={['product_name', 'imei_numbers', 'quantity', 'price']} actions={(row) => <button className="danger-btn" onClick={() => setCart(cart.filter((item) => item.cart_key !== row.cart_key))}><Trash2 size={15} /></button>} editable={(row, key, value) => setCart(cart.map((item) => item.cart_key === row.cart_key ? { ...item, [key]: ['quantity', 'price'].includes(key) ? Number(value) : value } : item))} />{!isTraders && <div className="quick-customer"><strong>Quick Customer Entry</strong><div className="inline-form quick"><input placeholder="Name" value={quick.name} onChange={(e) => setQuick({ ...quick, name: e.target.value })} /><input placeholder="Phone" value={quick.phone} onChange={(e) => setQuick({ ...quick, phone: e.target.value })} /><input placeholder="Address" value={quick.address} onChange={(e) => setQuick({ ...quick, address: e.target.value })} /><input placeholder="CNIC" value={quick.cnic} onChange={(e) => setQuick({ ...quick, cnic: e.target.value })} /><input placeholder="Notes" value={quick.notes} onChange={(e) => setQuick({ ...quick, notes: e.target.value })} /><button className="ghost-btn" type="button" onClick={createWalkIn} disabled={!quick.name && !quick.phone}><Plus size={15} /> Create Customer</button></div></div>}<div className="form-grid"><label>{isTraders ? 'Retailer' : 'Customer'}<select data-customer-select value={payment.customer_uuid} onChange={(e) => setPayment({ ...payment, customer_uuid: e.target.value })}><option value="">{isTraders ? 'Select retailer' : 'Walk-in Customer'}</option>{customerOptions.map((item) => <option key={item.uuid} value={item.uuid}>{item.name || item.shop_name} {item.phone ? `- ${item.phone}` : ''}</option>)}</select></label><label>Payment<select value={payment.payment_type} onChange={(e) => setPayment({ ...payment, payment_type: e.target.value })}><option value="cash">Cash</option><option value="credit">Credit</option><option value="partial">Partial</option></select></label><label>Discount<input type="number" value={payment.discount} onChange={(e) => setPayment({ ...payment, discount: e.target.value })} /></label><label>Tax<input type="number" value={payment.tax} onChange={(e) => setPayment({ ...payment, tax: e.target.value })} /></label><label>Paid<input data-paid-input type="number" value={payment.payment_type === 'credit' ? 0 : payment.paid || total} onChange={(e) => setPayment({ ...payment, paid: e.target.value })} /></label><label>Due Date<input type="date" value={payment.due_date} onChange={(e) => setPayment({ ...payment, due_date: e.target.value })} /></label></div><div className="totals"><span>Subtotal {money(subtotal)}</span><strong>Total {money(total)}</strong></div><div className="button-row"><button className="primary-btn" disabled={!cart.length} onClick={completeSale}><ReceiptText size={18} /> Save Sale</button><button className="ghost-btn" disabled={!cart.length} onClick={() => printInvoice(draftInvoice, cart, brand)}><Printer size={16} /> Print</button><button className="ghost-btn" disabled={!cart.length} onClick={() => downloadPdf('invoice.pdf', 'Sales Invoice', invoicePdfLines(draftInvoice, cart, brand))}><FileDown size={16} /> PDF</button><button className="ghost-btn" disabled={!cart.length} onClick={shareInvoiceOnWhatsApp}><MessageCircle size={16} /> WhatsApp</button></div></section></div>;
+  return (
+    <div className="pos-grid smart-pos">
+      <section className="panel">
+        <div className="module-head">
+          <h2>Modern POS</h2>
+          <span className="shortcut-pill"><Keyboard size={15} /> F1 New - F2 Customer - F3 Product - F4 Checkout - F5 Print</span>
+        </div>
+        <SearchBox value={query} onChange={setQuery} placeholder="Product search, barcode, SKU or serial" inputProps={{ 'data-product-search': true }} />
+        <UniversalProductLookup autoFocus value={scan} data={data} onChange={setScan} onPick={scanToCart} />
+        <div className="product-picker">
+          {products.length ? products.map((product) => (
+            <button key={product.uuid} onClick={() => addToCart(product)}>
+              <div className="product-thumb">{product.image ? <img src={product.image} alt="" /> : <Smartphone size={22} />}</div>
+              <strong>{product.product_name}</strong>
+              <span>{product.barcode || product.secondary_barcode || product.sku || product.product_code || imeiListText(product)}</span>
+              <b>{money(product.sale_price)}</b>
+              <small>{product.quantity} in stock</small>
+            </button>
+          )) : <EmptyRows />}
+        </div>
+      </section>
+
+      <section className="panel cart-panel">
+        <div className="module-head">
+          <h2>Quick Cart & Fast Checkout</h2>
+          <select value={receiptFormat} onChange={(event) => setReceiptFormat(event.target.value)}>
+            <option value="58mm">58mm Thermal</option>
+            <option value="80mm">80mm Thermal</option>
+            <option value="a4">A4 Invoice</option>
+          </select>
+        </div>
+        <DataTable
+          rows={cart}
+          columns={['product_name', 'imei_numbers', 'quantity', 'price']}
+          actions={(row) => <button className="danger-btn" onClick={() => setCart(cart.filter((item) => item.cart_key !== row.cart_key))}><Trash2 size={15} /></button>}
+          editable={(row, key, value) => setCart(cart.map((item) => item.cart_key === row.cart_key ? { ...item, [key]: ['quantity', 'price'].includes(key) ? Number(value) : value } : item))}
+        />
+
+        <div className="customer-collapsible">
+          <button type="button" className="ghost-btn" onClick={() => setCustomerOpen(true)}><Plus size={15} /> Quick Add Customer</button>
+          <label>{isTraders ? 'Retailer' : 'Customer'}
+            <select data-customer-select value={payment.customer_uuid} onChange={(e) => setPayment({ ...payment, customer_uuid: e.target.value })}>
+              <option value="">{isTraders ? 'Select retailer' : 'Walk-in Customer'}</option>
+              {customerOptions.map((item) => <option key={item.uuid} value={item.uuid}>{item.name || item.shop_name} {item.phone ? `- ${item.phone}` : ''}</option>)}
+            </select>
+          </label>
+        </div>
+
+        <div className="form-grid">
+          <label>Payment<select value={payment.payment_type} onChange={(e) => setPayment({ ...payment, payment_type: e.target.value })}><option value="cash">Cash</option><option value="credit">Credit</option><option value="partial">Partial</option></select></label>
+          <label>Discount<input type="number" value={payment.discount} onChange={(e) => setPayment({ ...payment, discount: e.target.value })} /></label>
+          <label>Tax<input type="number" value={payment.tax} onChange={(e) => setPayment({ ...payment, tax: e.target.value })} /></label>
+          <label>Paid<input data-paid-input type="number" value={payment.payment_type === 'credit' ? 0 : payment.paid || total} onChange={(e) => setPayment({ ...payment, paid: e.target.value })} /></label>
+          <label>Due Date<input type="date" value={payment.due_date} onChange={(e) => setPayment({ ...payment, due_date: e.target.value })} /></label>
+        </div>
+
+        <div className="payment-summary">
+          <span>Subtotal <strong>{money(subtotal)}</strong></span>
+          <span>Discount <strong>{money(payment.discount)}</strong></span>
+          <span>Tax <strong>{money(payment.tax)}</strong></span>
+          <span>Grand Total <strong>{money(total)}</strong></span>
+          <span>Paid Amount <strong>{money(paid)}</strong></span>
+          <span className={changeReturn > 0 ? 'ok' : dueAmount > 0 ? 'bad' : ''}>{changeReturn > 0 ? 'Change Return' : 'Due Amount'} <strong>{money(changeReturn > 0 ? changeReturn : dueAmount)}</strong></span>
+        </div>
+
+        <div className="button-row pos-actions">
+          <button className="primary-btn" disabled={!cart.length} onClick={completeSale}><ReceiptText size={18} /> Complete Sale</button>
+          <button className="ghost-btn" disabled={!cart.length} onClick={() => printInvoice(draftInvoice, cart, brand, receiptFormat)}><Printer size={16} /> Print Bill</button>
+          <button className="ghost-btn" disabled={!cart.length} onClick={() => downloadPdf('invoice.pdf', 'Sales Invoice', invoicePdfLines(draftInvoice, cart, brand))}><FileDown size={16} /> PDF Bill</button>
+          <button className="ghost-btn" disabled={!cart.length} onClick={shareInvoiceOnWhatsApp}><MessageCircle size={16} /> WhatsApp Bill</button>
+        </div>
+      </section>
+
+      {customerOpen && <ModalShell onClose={() => setCustomerOpen(false)} size="small"><form onSubmit={(event) => { event.preventDefault(); createWalkIn(); }}><div className="modal-header"><h2>Quick Add Customer</h2><button type="button" className="icon-btn" onClick={() => setCustomerOpen(false)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Name<input placeholder="Name" value={quick.name} onChange={(e) => setQuick({ ...quick, name: e.target.value })} /></label><label>Phone<input placeholder="Phone" value={quick.phone} onChange={(e) => setQuick({ ...quick, phone: e.target.value })} /></label><label>Address<input placeholder="Address" value={quick.address} onChange={(e) => setQuick({ ...quick, address: e.target.value })} /></label><label>CNIC<input placeholder="CNIC" value={quick.cnic} onChange={(e) => setQuick({ ...quick, cnic: e.target.value })} /></label><label>Notes<input placeholder="Notes" value={quick.notes} onChange={(e) => setQuick({ ...quick, notes: e.target.value })} /></label></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setCustomerOpen(false)}>Cancel</button><button className="primary-btn" disabled={!quick.name && !quick.phone}>Create Customer</button></div></form></ModalShell>}
+    </div>
+  );
 }
 
 function Credit({ data, refresh }) {
@@ -2668,9 +2739,15 @@ function printPurchaseReceipt(purchase) {
   printHtml(`Purchase ${purchase.invoice_number}`, `<section class="receipt-shell"><div class="brand">Purchase Receipt</div><h2>${purchase.invoice_number}</h2><p>Supplier: ${purchase.supplier_name || ''}</p><p>Status: ${purchase.status || ''}</p><h3>Total: ${money(purchase.total)}</h3><p>Paid: ${money(purchase.paid)} | Balance: ${money(purchase.balance)}</p></section>`);
 }
 
-function printInvoice(sale, cart = [], brand = {}) {
+function receiptFormatClass(format = 'a4') {
+  if (String(format).includes('58')) return 'thermal thermal-58';
+  if (String(format).includes('80') || String(format).toLowerCase() === 'thermal') return 'thermal thermal-80';
+  return 'a4-invoice';
+}
+
+function printInvoice(sale, cart = [], brand = {}, format = 'a4') {
   const qr = receiptQrData(sale);
-  const html = `<section class="receipt-shell"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p>${sale.customer_name || 'Walk-in Customer'} - ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>IMEI / Serial</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${item.product_name}</td><td>${imeiListText(item)}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('') : `<tr><td colspan="4">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Total: ${money(sale.total)}</h3><p>Paid: ${money(sale.paid)} | Balance: ${money(sale.balance)}</p><p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
+  const html = `<section class="receipt-shell ${receiptFormatClass(format)}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p>${sale.customer_name || 'Walk-in Customer'} - ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>IMEI / Serial</th><th>Qty</th><th>Price</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${item.product_name}</td><td>${imeiListText(item)}</td><td>${item.quantity}</td><td>${money(item.price)}</td></tr>`).join('') : `<tr><td colspan="4">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Total: ${money(sale.total)}</h3><p>Paid: ${money(sale.paid)} | Balance: ${money(sale.balance)}</p><p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
   printHtml(`Invoice ${sale.invoice_number}`, html);
 }
 

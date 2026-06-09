@@ -2030,7 +2030,7 @@ function printDocument(title, html) {
     .receipt-head{display:flex;justify-content:space-between;gap:20px;border-bottom:2px solid #111;padding-bottom:14px;margin-bottom:14px}
     .receipt-total{font-size:24px;font-weight:900;text-align:right}.signature{height:70px;border-bottom:1px solid #111;margin-top:24px}
     button{margin-top:18px;border:0;background:#0f9f8f;color:white;border-radius:6px;padding:10px 16px;font-weight:800}
-    @media print{button{display:none}body{margin:0}.thermal{max-width:302px;font-size:12px}.thermal .receipt-head{display:block}}
+    @media print{button{display:none}body{margin:0}.thermal{font-size:12px}.thermal-58{max-width:219px}.thermal-80{max-width:302px}.thermal .receipt-head{display:block}.a4-invoice{max-width:820px}}
   </style></head><body>${html}<button onclick="print()">Print</button></body></html>`;
 }
 

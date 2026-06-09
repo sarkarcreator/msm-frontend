@@ -97,6 +97,16 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .product-thumb img { @apply h-full w-full rounded object-cover; }
 .product-picker span, .product-picker small { @apply text-xs text-black/55 dark:text-white/55; }
 .product-picker b { @apply text-coral; }
+.smart-pos { @apply items-start; }
+.customer-collapsible { @apply my-4 grid gap-3 rounded-2xl border border-black/10 bg-paper/70 p-3 dark:border-white/10 dark:bg-black/20; }
+.customer-collapsible label { @apply grid gap-2 text-sm font-semibold text-black/60 dark:text-white/60; }
+.customer-collapsible select { @apply h-10 rounded-2xl border border-black/10 bg-white px-3 text-ink outline-none focus:border-mint dark:border-white/10 dark:bg-black/20 dark:text-white; }
+.payment-summary { @apply my-4 grid gap-2 rounded-2xl border border-black/10 bg-white p-4 shadow-lg dark:border-white/10 dark:bg-black/20 sm:grid-cols-2; }
+.payment-summary span { @apply flex items-center justify-between gap-3 text-sm text-black/60 dark:text-white/60; }
+.payment-summary strong { @apply text-base text-ink dark:text-white; }
+.payment-summary .ok strong { @apply text-mint; }
+.payment-summary .bad strong { @apply text-coral; }
+.pos-actions { @apply grid grid-cols-1 sm:grid-cols-2; }
 
 .chart-card { @apply relative mt-4 overflow-hidden rounded-2xl border border-black/10 bg-gradient-to-br from-white to-mint/5 p-4 dark:border-white/10 dark:from-white/5 dark:to-mint/10; }
 .chart-grid-lines { @apply pointer-events-none absolute inset-x-4 top-6 bottom-14 grid grid-rows-3; }
