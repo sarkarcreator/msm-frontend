@@ -521,8 +521,10 @@ const HEADER_LABELS = {
   total_cost: 'Total Cost',
   packaging_view: 'Packaging View',
   selected_unit: 'Selling Unit',
+  unit_conversion: 'Conversion',
   stock_quantity: 'Stock Qty',
   conversion_factor: 'Contains',
+  line_total: 'Line Total',
   batch_number: 'Batch',
   expiry_date: 'Expiry',
   manufacturer: 'Manufacturer',
@@ -878,15 +880,30 @@ function productDisplayName(record = {}) {
 
 function saleLineDisplayName(record = {}) {
   const base = productDisplayName(record);
-  const unit = String(record.selected_unit_label || record.selling_unit_label || '').trim();
-  if (!unit || base.toLowerCase().includes(unit.toLowerCase())) return base;
-  return `${base} ${unit}`;
+  return base;
 }
 
 function lineQuantityLabel(item = {}) {
   const quantity = Number(item.quantity || 0);
   const unit = quantity === 1 ? (item.selected_unit || item.selling_unit || '') : pluralUnit(item.selected_unit || item.selling_unit || '');
   return `${quantity} ${unit}`.trim();
+}
+
+function lineUnitLabel(item = {}) {
+  return item.selected_unit_label || item.selling_unit_label || item.selected_unit || item.selling_unit || '';
+}
+
+function lineConversionLabel(item = {}) {
+  const factor = Math.max(1, Number(item.conversion_factor || item.factor || 1));
+  const unit = lineUnitLabel(item);
+  const match = String(unit || '').match(/\(([^)]+)\)/);
+  if (match?.[1]) return match[1];
+  if (factor <= 1) return 'Base Unit';
+  return `${factor} Base Units`;
+}
+
+function lineTotal(item = {}) {
+  return Number(item.quantity || 0) * Number(item.price || item.rate || 0);
 }
 
 function lineStockQuantity(item = {}) {
@@ -912,8 +929,8 @@ function packagingUnits(product = {}) {
       label: `Box (${Math.max(1, Number(product.units_per_box || product.units_per_package || 1))} ${pluralUnit(baseUnit)})`,
       unit: 'Box',
       factor: Math.max(1, Number(product.units_per_box || product.units_per_package || 1)),
-      sale_price: Number(product.box_sale_price || product.package_sale_price || 0),
-      purchase_price: Number(product.box_purchase_price || product.package_cost_price || 0),
+      sale_price: Number(product.box_sale_price || product.package_sale_price || 0) || Number(base.sale_price || 0) * Math.max(1, Number(product.units_per_box || product.units_per_package || 1)),
+      purchase_price: Number(product.box_purchase_price || product.package_cost_price || 0) || Number(base.purchase_price || 0) * Math.max(1, Number(product.units_per_box || product.units_per_package || 1)),
       barcode: product.box_barcode || '',
     } : null,
     product.carton_barcode || product.units_per_carton ? {
@@ -921,8 +938,8 @@ function packagingUnits(product = {}) {
       label: `Carton (${Math.max(1, Number(product.units_per_carton || product.units_per_package || 1))} ${pluralUnit(baseUnit)})`,
       unit: 'Carton',
       factor: Math.max(1, Number(product.units_per_carton || product.units_per_package || 1)),
-      sale_price: Number(product.carton_sale_price || 0),
-      purchase_price: Number(product.carton_purchase_price || 0),
+      sale_price: Number(product.carton_sale_price || 0) || Number(base.sale_price || 0) * Math.max(1, Number(product.units_per_carton || product.units_per_package || 1)),
+      purchase_price: Number(product.carton_purchase_price || 0) || Number(base.purchase_price || 0) * Math.max(1, Number(product.units_per_carton || product.units_per_package || 1)),
       barcode: product.carton_barcode || '',
     } : null,
   ].filter(Boolean);
@@ -1000,24 +1017,30 @@ function stockPackagingBreakdown(product = {}) {
   const total = Math.max(0, Math.floor(Number(product.quantity || 0)));
   const units = packagingUnits(product).filter((unit) => Number(unit.factor || 1) > 1).sort((a, b) => Number(b.factor || 1) - Number(a.factor || 1));
   if (!units.length || total === 0) return { base: total, text: `${total} ${pluralUnit(product.unit || product.variant_type || 'Piece')}` };
+  const parts = units.map((unit) => {
+    const factor = Math.max(1, Number(unit.factor || 1));
+    const count = Math.floor(total / factor);
+    const loose = total % factor;
+    return `${count} ${pluralUnit(unit.unit || unit.label)}${loose ? ` + ${loose} ${pluralUnit(product.unit || product.variant_type || 'Piece')}` : ''}`;
+  }).filter(Boolean);
   let remaining = total;
-  const parts = [];
+  const largestParts = [];
   for (const unit of units) {
     const factor = Math.max(1, Number(unit.factor || 1));
     const count = Math.floor(remaining / factor);
     if (count > 0) {
-      parts.push(`${count} ${pluralUnit(unit.unit || unit.label)}`);
+      largestParts.push(`${count} ${pluralUnit(unit.unit || unit.label)}`);
       remaining -= count * factor;
     }
   }
   if (remaining > 0) parts.push(`${remaining} ${pluralUnit(product.unit || product.variant_type || 'Piece')}`);
-  return { base: total, text: parts.join(' ') || `${total} ${pluralUnit(product.unit || product.variant_type || 'Piece')}` };
+  return { base: total, text: largestParts.concat(remaining > 0 ? [`${remaining} ${pluralUnit(product.unit || product.variant_type || 'Piece')}`] : []).join(' '), equivalents: parts.join(' / ') };
 }
 
 function stockPackagingView(product = {}) {
   const breakdown = stockPackagingBreakdown(product);
   const baseUnit = product.unit || product.variant_type || 'Piece';
-  return `${breakdown.base} ${pluralUnit(baseUnit)} | ${breakdown.text}`;
+  return `${breakdown.base} ${pluralUnit(baseUnit)} | ${breakdown.text}${breakdown.equivalents ? ` | ${breakdown.equivalents}` : ''}`;
 }
 
 function normalizeScanValue(value) {
@@ -1905,7 +1928,7 @@ function POS2({ data, brand, refresh }) {
         </div>
         <DataTable
           rows={cart}
-          columns={['product_name', 'selected_unit', 'stock_quantity', 'quantity', 'price']}
+          columns={['product_name', 'selected_unit', 'unit_conversion', 'quantity', 'price', 'line_total', 'stock_quantity']}
           actions={(row) => <button className="danger-btn" onClick={() => setCart(cart.filter((item) => item.cart_key !== row.cart_key))}><Trash2 size={15} /></button>}
           editable={updateCartLine}
         />
@@ -3023,12 +3046,16 @@ function money(value) {
 
 function displayCellValue(row = {}, key) {
   if (key === 'selected_unit') return row.selected_unit_label || row.selected_unit;
+  if (key === 'unit_conversion') return lineConversionLabel(row);
+  if (key === 'line_total') return lineTotal(row);
   return key === 'product_name' ? productDisplayName(row) : row[key];
 }
 
 function format(value, key, row = {}) {
   if (key === 'product_name') return saleLineDisplayName(row);
   if (key === 'selected_unit') return row.selected_unit_label || value || '';
+  if (key === 'unit_conversion') return lineConversionLabel(row);
+  if (key === 'line_total') return money(lineTotal(row));
   if (key === 'imei_numbers') return imeiListText({ imei_numbers: value });
   if (key === 'status') return <span className={`status-tag ${statusClass(value)}`}>{String(value ?? '')}</span>;
   if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'registration_fee', 'doctor_fee', 'medicine_charges', 'injection_charges', 'lab_charges', 'radiology_charges', 'procedure_charges', 'grand_total', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent', 'available', 'cash_in', 'sent', 'pending', 'fee_profit', 'mrp'].includes(key)) return money(value);
@@ -3149,7 +3176,7 @@ function printInvoice(sale, cart = [], brand = {}, format = 'a4') {
   const settlement = payment.changeReturn > 0
     ? `<p><strong>Change Return:</strong> ${money(payment.changeReturn)}</p>`
     : `<p><strong>Due Amount:</strong> ${money(payment.dueAmount)}</p>`;
-  const html = `<section class="receipt-shell ${receiptFormatClass(format)}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p><strong>Invoice Number:</strong> ${sale.invoice_number || ''}</p><p><strong>Customer:</strong> ${sale.customer_name || 'Walk-in Customer'}</p><p><strong>Date:</strong> ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>IMEI / Serial</th><th>Qty</th><th>Rate</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${saleLineDisplayName(item)}</td><td>${imeiListText(item)}</td><td>${lineQuantityLabel(item)}</td><td>${money(item.price)}</td></tr>`).join('') : `<tr><td colspan="4">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Grand Total: ${money(payment.total)}</h3><p><strong>Payment Method:</strong> ${payment.method}</p><p><strong>Paid Amount:</strong> ${money(payment.paid)}</p>${settlement}<p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
+  const html = `<section class="receipt-shell ${receiptFormatClass(format)}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p><strong>Invoice Number:</strong> ${sale.invoice_number || ''}</p><p><strong>Customer:</strong> ${sale.customer_name || 'Walk-in Customer'}</p><p><strong>Date:</strong> ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>Unit</th><th>Conversion</th><th>IMEI / Serial</th><th>Qty</th><th>Rate</th><th>Total</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${saleLineDisplayName(item)}</td><td>${lineUnitLabel(item)}</td><td>${lineConversionLabel(item)}</td><td>${imeiListText(item)}</td><td>${lineQuantityLabel(item)}</td><td>${money(item.price)}</td><td>${money(lineTotal(item))}</td></tr>`).join('') : `<tr><td colspan="7">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Grand Total: ${money(payment.total)}</h3><p><strong>Payment Method:</strong> ${payment.method}</p><p><strong>Paid Amount:</strong> ${money(payment.paid)}</p>${settlement}<p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
   printHtml(`Invoice ${sale.invoice_number}`, html);
 }
 
@@ -3190,7 +3217,7 @@ function invoicePdfLines(invoice, cart, brand = {}) {
     brand?.contact_number || '',
     `Invoice Number: ${invoice.invoice_number}`,
     `Customer Name: ${invoice.customer_name || 'Walk-in Customer'}`,
-    ...cart.map((item) => `${saleLineDisplayName(item)} x ${lineQuantityLabel(item)} @ ${money(item.price)} - ${money(Number(item.quantity) * Number(item.price))}${imeiListText(item) ? ` | IMEI: ${imeiListText(item)}` : ''}`),
+    ...cart.map((item) => `${saleLineDisplayName(item)} | Unit: ${lineUnitLabel(item)} | Conversion: ${lineConversionLabel(item)} | Qty: ${lineQuantityLabel(item)} | Rate: ${money(item.price)} | Total: ${money(lineTotal(item))}${imeiListText(item) ? ` | IMEI: ${imeiListText(item)}` : ''}`),
     `Subtotal: ${money(invoice.subtotal)}`,
     `Discount: ${money(invoice.discount)}`,
     `Tax: ${money(invoice.tax)}`,
@@ -3206,7 +3233,7 @@ function invoiceMessage(invoice, brand = {}, cart = []) {
   const payment = paymentDisplay(invoice);
   const items = cart.length ? `\nItems:\n${cart.map((item) => {
     const imei = imeiListText(item);
-    return `- ${saleLineDisplayName(item)} x ${lineQuantityLabel(item)} @ ${money(item.price || 0)}${imei ? `\n  IMEI: ${imei}` : ''}`;
+    return `- ${saleLineDisplayName(item)}\n  Unit: ${lineUnitLabel(item)}\n  Conversion: ${lineConversionLabel(item)}\n  Qty: ${lineQuantityLabel(item)}\n  Rate: ${money(item.price || 0)}\n  Total: ${money(lineTotal(item))}${imei ? `\n  IMEI: ${imei}` : ''}`;
   }).join('\n')}` : '';
   const status = invoice.status || (payment.dueAmount > 0 ? 'Credit Due' : 'Paid');
   const settlement = payment.changeReturn > 0 ? `Change Return: ${money(payment.changeReturn)}` : `Due Amount: ${money(payment.dueAmount)}`;
