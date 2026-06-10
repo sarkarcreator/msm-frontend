@@ -588,17 +588,17 @@ function withLocalResults(payload, term, products, imeis, options = {}) {
   if (!limit) return payload;
   const seen = new Set();
   const results = [];
-  const add = (match_type, product, imei = null, quantity_multiplier = 1) => {
+  const add = (match_type, product, imei = null, quantity_multiplier = 1, packaging_unit = null) => {
     if (!product?.uuid || seen.has(`${product.uuid}:${match_type}`)) return;
     seen.add(`${product.uuid}:${match_type}`);
-    results.push({ match_type, product, imei, quantity_multiplier });
+    results.push({ match_type, product, imei, quantity_multiplier, packaging_unit });
   };
   for (const field of ['barcode', 'secondary_barcode', 'qr_code', 'sku', 'product_code', 'box_barcode', 'carton_barcode']) {
     products.filter((row) => normalizeScan(row[field]).toLowerCase() === term.toLowerCase()).forEach((product) => add(field, product, null, localQuantityMultiplier(field, product)));
   }
   products.forEach((product) => localPackagingUnits(product)
     .filter((unit) => normalizeScan(unit.barcode).toLowerCase() === term.toLowerCase())
-    .forEach((unit) => add(`packaging:${unit.key}`, product, null, unit.factor)));
+    .forEach((unit) => add(`packaging:${unit.key}`, product, null, unit.factor, unit)));
   imeis.filter((row) => [row.imei_1, row.imei_2, row.serial_number, ...(normalizeImeiList(row.imei_numbers || []))]
     .some((value) => normalizeScan(value).toLowerCase() === term.toLowerCase()))
     .forEach((imei) => add('imei', products.find((row) => row.uuid === imei.product_uuid), imei, 1));

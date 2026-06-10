@@ -520,9 +520,11 @@ const HEADER_LABELS = {
   package_cost_price: 'Cost Per Box',
   total_cost: 'Total Cost',
   packaging_view: 'Packaging View',
-  selected_unit: 'Selling Unit',
-  unit_conversion: 'Conversion',
-  stock_quantity: 'Stock Qty',
+  selected_unit: 'Unit',
+  unit_conversion: 'Contains',
+  stock_quantity: 'Stock Impact',
+  available_stock: 'Available Stock',
+  price: 'Unit Price',
   conversion_factor: 'Contains',
   line_total: 'Line Total',
   batch_number: 'Batch',
@@ -907,8 +909,9 @@ function lineConversionLabel(item = {}) {
   const unit = lineUnitLabel(item);
   const match = String(unit || '').match(/\(([^)]+)\)/);
   if (match?.[1]) return match[1];
-  if (factor <= 1) return 'Base Unit';
-  return `${factor} Base Units`;
+  const base = item.base_unit || item.unit_base || item.inventory_unit || 'Piece';
+  if (factor <= 1) return `1 ${singularUnit(base)}`;
+  return `${factor} ${pluralUnit(base)}`;
 }
 
 function lineTotal(item = {}) {
@@ -921,7 +924,7 @@ function lineStockQuantity(item = {}) {
 
 function packagingUnits(product = {}) {
   const parsed = parsePackagingUnits(product.packaging_units);
-  const baseUnit = product.unit && !['Single Unit', 'Unit'].includes(product.unit) ? product.unit : product.variant_type || 'Piece';
+  const baseUnit = productBaseUnit(product);
   const base = {
     key: 'base',
     label: baseUnit,
@@ -930,6 +933,7 @@ function packagingUnits(product = {}) {
     sale_price: Number(product.sale_price || product.unit_sale_price || 0),
     purchase_price: Number(product.purchase_price || product.unit_cost_price || 0),
     barcode: product.barcode || product.secondary_barcode || product.qr_code || product.sku || '',
+    base_unit: baseUnit,
   };
   const normalizedParsed = hierarchyPackagingUnits(parsed, base);
   const derived = [
@@ -969,14 +973,16 @@ function parsePackagingUnits(value) {
 function normalizePackagingUnit(unit = {}, base = {}) {
   const factor = Math.max(1, Number(unit.conversion_factor || unit.factor || unit.contains || 1));
   const label = unit.label || unit.name || unit.unit || 'Piece';
+  const baseUnit = base.unit || base.base_unit || 'Piece';
   return {
     key: String(unit.key || label).toLowerCase().replaceAll(' ', '_'),
-    label: factor > 1 && !String(label).includes('(') ? `${label} (${factor} ${pluralUnit(base.unit || 'Piece')})` : label,
+    label: factor > 1 && !String(label).includes('(') ? `${label} (${factor} ${pluralUnit(baseUnit)})` : label,
     unit: unit.unit || label,
     factor,
     sale_price: Number(unit.sale_price || unit.price || 0) || Number(base.sale_price || 0) * factor,
     purchase_price: Number(unit.purchase_price || unit.cost_price || 0) || Number(base.purchase_price || 0) * factor,
     barcode: unit.barcode || unit.code || '',
+    base_unit: baseUnit,
   };
 }
 
@@ -1005,6 +1011,19 @@ function hierarchyPackagingUnits(units = [], base = {}) {
 function pluralUnit(unit = 'Piece') {
   const text = String(unit || 'Piece').replace(/\s*\(.*/, '');
   return text.toLowerCase().endsWith('s') ? text : `${text}s`;
+}
+
+function singularUnit(unit = 'Piece') {
+  const text = String(unit || 'Piece').replace(/\s*\(.*/, '').trim() || 'Piece';
+  return text.toLowerCase().endsWith('s') && text.length > 1 ? text.slice(0, -1) : text;
+}
+
+function productBaseUnit(product = {}) {
+  return product.unit && !['Single Unit', 'Unit'].includes(product.unit) ? product.unit : product.variant_type || 'Piece';
+}
+
+function stockAvailableLabel(product = {}) {
+  return stockPackagingView(product) || `${Number(product.quantity || 0)} ${pluralUnit(productBaseUnit(product))}`;
 }
 
 function unitForMatch(product = {}, match = {}) {
@@ -1904,6 +1923,8 @@ function POS2({ data, brand, refresh }) {
         quantity,
         price: unit.sale_price,
         stock_quantity: stockQuantity,
+        available_stock: stockAvailableLabel(product),
+        base_unit: unit.base_unit || productBaseUnit(product),
         selected_unit_key: unit.key,
         selected_unit: unit.unit,
         selected_unit_label: unit.label,
@@ -1933,6 +1954,7 @@ function POS2({ data, brand, refresh }) {
           conversion_factor: unit.factor,
           unit_barcode: unit.barcode,
           price: unit.sale_price,
+          base_unit: unit.base_unit || item.base_unit || 'Piece',
           stock_quantity: quantity * unit.factor,
         };
       }
@@ -2007,7 +2029,7 @@ function POS2({ data, brand, refresh }) {
               <strong>{productDisplayName(product)}</strong>
               <span>{product.barcode || product.secondary_barcode || product.sku || product.product_code || imeiListText(product)}</span>
               <b>{money(product.sale_price)}</b>
-              <small>{product.quantity} in stock</small>
+              <small>Available: {stockAvailableLabel(product)}</small>
             </button>
           )) : <EmptyRows />}
         </div>
@@ -2024,7 +2046,7 @@ function POS2({ data, brand, refresh }) {
         </div>
         <DataTable
           rows={cart}
-          columns={['product_name', 'selected_unit', 'unit_conversion', 'quantity', 'price', 'line_total', 'stock_quantity']}
+          columns={['product_name', 'selected_unit', 'unit_conversion', 'available_stock', 'price', 'quantity', 'line_total']}
           actions={(row) => <button className="danger-btn" onClick={() => setCart(cart.filter((item) => item.cart_key !== row.cart_key))}><Trash2 size={15} /></button>}
           editable={updateCartLine}
         />
@@ -2561,7 +2583,7 @@ function DataTable({ rows, columns, actions, editable, onAdd }) {
   function toggleSort(column) {
     setSort((current) => current.key === column ? { key: column, dir: current.dir === 'asc' ? 'desc' : 'asc' } : { key: column, dir: 'asc' });
   }
-  return <div className="data-table"><div className="table-wrap"><table><thead><tr>{columns.map((column) => <th key={column}><button className="sort-head" onClick={() => toggleSort(column)}>{headerLabel(column)}<span>{sort.key === column ? (sort.dir === 'asc' ? '^' : 'v') : '-'}</span></button></th>)}{actions && <th className="actions-head">Actions</th>}</tr></thead><tbody>{pageRows.length ? pageRows.map((row, index) => <tr key={row.uuid || index}>{columns.map((column) => <td key={column} title={String(displayCellValue(row, column) ?? '')}>{editable && ['quantity', 'price'].includes(column) ? <input className="cell-input" type="number" value={row[column]} onChange={(e) => editable(row, column, e.target.value)} /> : editable && column === 'selected_unit' && row.packaging_options?.length ? <select className="cell-input" value={row.selected_unit_key || row.packaging_options[0].key} onChange={(e) => editable(row, column, e.target.value)}>{row.packaging_options.map((unit) => <option key={unit.key} value={unit.key}>{unit.label}</option>)}</select> : format(row[column], column, row)}</td>)}{actions && <td className="actions-cell"><div className="row-actions">{actions(row)}</div></td>}</tr>) : <tr><td colSpan={columns.length + (actions ? 1 : 0)}><EmptyRows onAdd={onAdd} /></td></tr>}</tbody></table></div><div className="table-footer"><span>Showing {start}-{end} of {total} records</span><div className="pagination"><button className="ghost-btn" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>Previous</button><span>Page {safePage} / {pages}</span><button className="ghost-btn" disabled={safePage >= pages} onClick={() => setPage(safePage + 1)}>Next</button></div></div></div>;
+  return <div className="data-table"><div className="table-wrap"><table><thead><tr>{columns.map((column) => <th key={column}><button className="sort-head" onClick={() => toggleSort(column)}>{headerLabel(column)}<span>{sort.key === column ? (sort.dir === 'asc' ? '^' : 'v') : '-'}</span></button></th>)}{actions && <th className="actions-head">Actions</th>}</tr></thead><tbody>{pageRows.length ? pageRows.map((row, index) => <tr key={row.uuid || index}>{columns.map((column) => <td key={column} title={String(displayCellValue(row, column) ?? '')}>{editable && ['quantity', 'price'].includes(column) ? <input className="cell-input" type="number" value={row[column]} onChange={(e) => editable(row, column, e.target.value)} /> : editable && column === 'selected_unit' && row.packaging_options?.length ? <select className="cell-input" value={row.selected_unit_key || row.packaging_options[0].key} onChange={(e) => editable(row, column, e.target.value)}>{row.packaging_options.map((unit) => <option key={unit.key} value={unit.key}>{unit.unit || unit.label}</option>)}</select> : format(row[column], column, row)}</td>)}{actions && <td className="actions-cell"><div className="row-actions">{actions(row)}</div></td>}</tr>) : <tr><td colSpan={columns.length + (actions ? 1 : 0)}><EmptyRows onAdd={onAdd} /></td></tr>}</tbody></table></div><div className="table-footer"><span>Showing {start}-{end} of {total} records</span><div className="pagination"><button className="ghost-btn" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>Previous</button><span>Page {safePage} / {pages}</span><button className="ghost-btn" disabled={safePage >= pages} onClick={() => setPage(safePage + 1)}>Next</button></div></div></div>;
 }
 
 function List({ title, rows, cols }) {
@@ -3141,7 +3163,7 @@ function money(value) {
 }
 
 function displayCellValue(row = {}, key) {
-  if (key === 'selected_unit') return row.selected_unit_label || row.selected_unit;
+  if (key === 'selected_unit') return row.selected_unit;
   if (key === 'unit_conversion') return lineConversionLabel(row);
   if (key === 'line_total') return lineTotal(row);
   return key === 'product_name' ? productDisplayName(row) : row[key];
@@ -3149,7 +3171,7 @@ function displayCellValue(row = {}, key) {
 
 function format(value, key, row = {}) {
   if (key === 'product_name') return saleLineDisplayName(row);
-  if (key === 'selected_unit') return row.selected_unit_label || value || '';
+  if (key === 'selected_unit') return row.selected_unit || value || '';
   if (key === 'unit_conversion') return lineConversionLabel(row);
   if (key === 'line_total') return money(lineTotal(row));
   if (key === 'imei_numbers') return imeiListText({ imei_numbers: value });
@@ -3193,7 +3215,7 @@ function printTable(title, rows, columns, brand = window.__msmBrand || {}) {
 
 function printableFormat(value, key, row = {}) {
   if (key === 'product_name') return saleLineDisplayName(row);
-  if (key === 'selected_unit') return row.selected_unit_label || value || '';
+  if (key === 'selected_unit') return row.selected_unit || value || '';
   if (['purchase_price', 'sale_price', 'cost_price', 'unit_cost_price', 'unit_sale_price', 'package_cost_price', 'total_cost', 'amount', 'fee', 'net_amount', 'salary', 'charges', 'repair_charges', 'advance_payment', 'remaining_amount', 'registration_fee', 'doctor_fee', 'medicine_charges', 'injection_charges', 'lab_charges', 'radiology_charges', 'procedure_charges', 'grand_total', 'subtotal', 'discount', 'tax', 'total', 'paid', 'balance', 'profit', 'debit', 'credit', 'total_spent', 'available', 'cash_in', 'sent', 'pending', 'fee_profit', 'mrp'].includes(key)) return money(value);
   if (String(key).includes('_at') && value) return new Date(value).toLocaleString();
   if (['visit_date', 'next_visit', 'delivery_date', 'expiry_date', 'due_date'].includes(key) && value) return new Date(value).toLocaleDateString();
