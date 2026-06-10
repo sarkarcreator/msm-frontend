@@ -1222,6 +1222,68 @@ function salesTodayTotal(sales = []) {
   return sales.filter((sale) => sameDayLocal(sale.sold_at || sale.created_at)).reduce((sum, sale) => sum + Number(sale.total || 0), 0);
 }
 
+function sameMonthLocal(value) {
+  return String(value || '').slice(0, 7) === new Date().toISOString().slice(0, 7);
+}
+
+function dashboardFinancialMetrics(data = {}) {
+  const sales = data.sales || [];
+  const paidHospitalBills = (data.hospital_bills || []).filter((bill) => ['Paid', 'Closed'].includes(bill.status) || Number(bill.paid || bill.paid_amount || 0) > 0);
+  const salesToday = salesTodayTotal(sales) + paidHospitalBills.filter((bill) => sameDayLocal(bill.received_at || bill.updated_at || bill.created_at)).reduce((sum, bill) => sum + Number(bill.paid_amount || bill.paid || bill.grand_total || 0), 0);
+  const salesThisMonth = sales.filter((sale) => sameMonthLocal(sale.sold_at || sale.created_at)).reduce((sum, sale) => sum + Number(sale.total || 0), 0)
+    + paidHospitalBills.filter((bill) => sameMonthLocal(bill.received_at || bill.updated_at || bill.created_at)).reduce((sum, bill) => sum + Number(bill.paid_amount || bill.paid || bill.grand_total || 0), 0);
+  const grossProfit = sales.reduce((sum, sale) => sum + Number(sale.profit || 0), 0);
+  const expenses = (data.expenses || []).reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  const inventoryValue = (data.products || []).reduce((sum, product) => sum + Number(product.quantity || 0) * Number(product.purchase_price || product.cost_price || 0), 0);
+  const cashbookBalance = (data.cashbook || []).reduce((sum, row) => sum + Number(row.debit || 0) - Number(row.credit || 0), 0);
+  const cashInHand = cashbookBalance || sales.reduce((sum, sale) => sum + Number(sale.paid || 0), 0) - expenses;
+  const customerReceivables = (data.customers || []).reduce((sum, customer) => sum + Number(customer.balance || 0), 0)
+    + sales.reduce((sum, sale) => sum + Number(sale.balance || 0), 0)
+    + (data.hospital_bills || []).reduce((sum, bill) => sum + Number(bill.balance || 0), 0);
+  const supplierPayables = (data.suppliers || []).reduce((sum, supplier) => sum + Number(supplier.balance || 0), 0)
+    + (data.purchases || []).reduce((sum, purchase) => sum + Number(purchase.balance || 0), 0);
+
+  return {
+    salesToday,
+    salesThisMonth,
+    grossProfit,
+    netProfit: grossProfit - expenses,
+    inventoryValue,
+    cashInHand,
+    customerReceivables,
+    supplierPayables,
+  };
+}
+
+function financialCards(data = {}) {
+  const metrics = dashboardFinancialMetrics(data);
+  return [
+    ['Sales Today', metrics.salesToday, true],
+    ['Sales This Month', metrics.salesThisMonth, true],
+    ['Gross Profit', metrics.grossProfit, true],
+    ['Net Profit', metrics.netProfit, true],
+    ['Inventory Value', metrics.inventoryValue, true],
+    ['Cash In Hand', metrics.cashInHand, true],
+    ['Customer Receivables', metrics.customerReceivables, true],
+    ['Supplier Payables', metrics.supplierPayables, true],
+  ];
+}
+
+function inventoryOverviewCards(data = {}, snapshot = null) {
+  const products = data.products || [];
+  const lowStock = snapshot?.lowStock || products.filter((product) => Number(product.quantity || 0) <= Number(product.low_stock_threshold || 3));
+  return [
+    ['Total Products', products.length, false],
+    ['Low Stock', lowStock.length, false],
+    ['Inventory Qty', products.reduce((sum, product) => sum + Number(product.quantity || 0), 0), false],
+    ['Active SKUs', products.filter((product) => product.status !== 'Inactive').length, false],
+  ];
+}
+
+function DashboardSection({ title, children }) {
+  return <section className="stack"><h2 className="section-title">{title}</h2>{children}</section>;
+}
+
 function topSellingProducts(data = {}) {
   const products = data.products || [];
   const namesByUuid = Object.fromEntries(products.map((product) => [product.uuid, productDisplayName(product)]));
@@ -1263,38 +1325,25 @@ function Dashboard({ snapshot, data, brand, auth, refresh }) {
   const showWalletDashboard = (ROLE_MODULES[auth?.role] || ROLE_MODULES.Cashier).includes('mobileWallets');
   const lowStock = snapshot?.lowStock || [];
   const topProducts = topSellingProducts(data);
+  const imeiStock = (data.imei_registry || []).filter((row) => !row.status || ['Available', 'In Stock'].includes(row.status)).length || products.reduce((sum, product) => sum + (imeiListText(product) ? imeiListText(product).split(',').length : 0), 0);
+  const nearExpiry = nearExpiryProducts(products);
+  const expired = expiredProducts(products);
+  const businessCards = key === 'mobile_shop'
+    ? [['IMEI Stock', imeiStock, false], ['Warranty Claims', (data.warranty_claims || []).length, false], ['Repairs', (data.repairs || []).length, false]]
+    : key === 'pharmacy'
+      ? [['Near Expiry', nearExpiry.length, false], ['Expired Medicines', expired.length, false], ['Medicines', (data.medicines || []).length, false]]
+      : [['Total Products', products.length, false], ['Low Stock', lowStock.length, false], ['Top Selling Products', topProducts[0]?.product_name || 'No Data Available', 'text']];
 
-  if (key === 'mobile_shop') {
-    const imeiStock = (data.imei_registry || []).filter((row) => !row.status || ['Available', 'In Stock'].includes(row.status)).length || products.reduce((sum, product) => sum + (imeiListText(product) ? imeiListText(product).split(',').length : 0), 0);
-    const cards = [
-      ['IMEI Stock', imeiStock, false],
-      ['Warranty Claims', (data.warranty_claims || []).length, false],
-      ['Sales Today', salesTodayTotal(sales), true],
-    ];
-    return <div className="stack"><MetricGrid cards={cards} />{showWalletDashboard && <WalletDashboard wallets={wallets} />}<RetailSalesPanel sales={sales} /><section className="split"><DashboardTable title="IMEI Stock" rows={(data.imei_registry || []).slice(0, 10)} cols={['product_name', 'imei_1', 'imei_2', 'serial_number', 'status']} emptyIcon={Smartphone} emptyTitle="No IMEI Stock" emptyDescription="Mobile IMEI stock will appear after purchases or inventory entry." /><DashboardTable title="Warranty Claims" rows={(data.warranty_claims || []).slice(0, 10)} cols={['claim_number', 'customer_name', 'product_name', 'imei_1', 'status']} emptyIcon={KeyRound} emptyTitle="No Warranty Claims" emptyDescription="Warranty claims will appear here." /></section></div>;
-  }
+  const businessTables = key === 'mobile_shop'
+    ? <section className="split"><DashboardTable title="IMEI Stock" rows={(data.imei_registry || []).slice(0, 10)} cols={['product_name', 'imei_1', 'imei_2', 'serial_number', 'status']} emptyIcon={Smartphone} emptyTitle="No IMEI Stock" emptyDescription="Mobile IMEI stock will appear after purchases or inventory entry." /><DashboardTable title="Warranty Claims" rows={(data.warranty_claims || []).slice(0, 10)} cols={['claim_number', 'customer_name', 'product_name', 'imei_1', 'status']} emptyIcon={KeyRound} emptyTitle="No Warranty Claims" emptyDescription="Warranty claims will appear here." /></section>
+    : key === 'pharmacy'
+      ? <section className="split"><DashboardTable title="Near Expiry Medicines" rows={nearExpiry} cols={['product_name', 'generic_name', 'batch_number', 'expiry_date', 'quantity']} emptyIcon={Boxes} emptyTitle="No Near Expiry Medicines" emptyDescription="Medicines close to expiry will appear here." /><DashboardTable title="Expired Medicines" rows={expired} cols={['product_name', 'generic_name', 'batch_number', 'expiry_date', 'quantity']} emptyIcon={Bell} emptyTitle="No Expired Medicines" emptyDescription="Expired medicines will appear here automatically." /></section>
+      : <section className="split"><DashboardTable title="Top Selling Products" rows={topProducts.slice(0, 10)} cols={['product_name', 'quantity', 'total']} emptyIcon={Boxes} emptyTitle="No Product Sales Available" emptyDescription="Top selling products will appear after sales are recorded." /><DashboardTable title="Low Stock" rows={lowStock} cols={['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={products.length ? 'All Stock Levels Healthy' : 'No Inventory Data Available'} emptyDescription={products.length ? 'Products below their low stock threshold will appear here.' : 'Add inventory or receive stock to enable alerts.'} /></section>;
 
-  if (key === 'pharmacy') {
-    const nearExpiry = nearExpiryProducts(products);
-    const expired = expiredProducts(products);
-    const cards = [
-      ['Near Expiry', nearExpiry.length, false],
-      ['Expired Medicines', expired.length, false],
-      ['Sales Today', salesTodayTotal(sales), true],
-    ];
-    return <div className="stack"><MetricGrid cards={cards} />{showWalletDashboard && <WalletDashboard wallets={wallets} />}<RetailSalesPanel sales={sales} /><section className="split"><DashboardTable title="Near Expiry Medicines" rows={nearExpiry} cols={['product_name', 'generic_name', 'batch_number', 'expiry_date', 'quantity']} emptyIcon={Boxes} emptyTitle="No Near Expiry Medicines" emptyDescription="Medicines close to expiry will appear here." /><DashboardTable title="Expired Medicines" rows={expired} cols={['product_name', 'generic_name', 'batch_number', 'expiry_date', 'quantity']} emptyIcon={Bell} emptyTitle="No Expired Medicines" emptyDescription="Expired medicines will appear here automatically." /></section></div>;
-  }
-
-  const cards = [
-    ['Total Products', products.length, false],
-    ['Low Stock', lowStock.length, false],
-    ['Sales Today', salesTodayTotal(sales), true],
-    ['Top Selling Products', topProducts[0]?.product_name || 'No Data Available', 'text'],
-  ];
-  return <div className="stack"><MetricGrid cards={cards} />{showWalletDashboard && <WalletDashboard wallets={wallets} />}<RetailSalesPanel sales={sales} /><section className="split"><DashboardTable title="Top Selling Products" rows={topProducts.slice(0, 10)} cols={['product_name', 'quantity', 'total']} emptyIcon={Boxes} emptyTitle="No Product Sales Available" emptyDescription="Top selling products will appear after sales are recorded." /><DashboardTable title="Low Stock" rows={lowStock} cols={['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={products.length ? 'All Stock Levels Healthy' : 'No Inventory Data Available'} emptyDescription={products.length ? 'Products below their low stock threshold will appear here.' : 'Add inventory or receive stock to enable alerts.'} /></section></div>;
+  return <div className="stack"><DashboardSection title="Financial Overview"><MetricGrid cards={financialCards(data)} /></DashboardSection><DashboardSection title="Inventory Overview"><MetricGrid cards={inventoryOverviewCards(data, snapshot)} /></DashboardSection><DashboardSection title="Business Metrics"><MetricGrid cards={businessCards} />{showWalletDashboard && <WalletDashboard wallets={wallets} />}{businessTables}</DashboardSection><DashboardSection title="Recent Activity"><RetailSalesPanel sales={sales} /></DashboardSection></div>;
 }
 
-function TradersDashboard({ data }) {
+function TradersDashboard({ data, snapshot }) {
   const sales = data.sales || [];
   const recoveries = data.trader_recoveries || [];
   const retailers = data.trader_retailers || [];
@@ -1306,7 +1355,7 @@ function TradersDashboard({ data }) {
     ['Route Sales', routeSales, true],
     ['Outstanding Balances', retailers.reduce((sum, row) => sum + Number(row.balance || 0), 0), true],
   ];
-  return <div className="stack"><MetricGrid cards={cards} /><section className="split"><DashboardTable title="Route Performance" rows={groupDashboardRows(sales, 'route_name')} cols={['name', 'total', 'count']} emptyIcon={FileText} emptyTitle="No Route Sales" emptyDescription="Route sales will appear after van sales are recorded." /><DashboardTable title="Recovery History" rows={recoveries.slice(0, 10)} cols={['retailer_name', 'salesman_name', 'amount', 'payment_method', 'date']} emptyIcon={WalletCards} emptyTitle="No Recovery Data" emptyDescription="Recoveries collected from retailers will appear here." /></section></div>;
+  return <div className="stack"><DashboardSection title="Financial Overview"><MetricGrid cards={financialCards(data)} /></DashboardSection><DashboardSection title="Inventory Overview"><MetricGrid cards={inventoryOverviewCards(data, snapshot)} /></DashboardSection><DashboardSection title="Business Metrics"><MetricGrid cards={cards} /><section className="split"><DashboardTable title="Route Performance" rows={groupDashboardRows(sales, 'route_name')} cols={['name', 'total', 'count']} emptyIcon={FileText} emptyTitle="No Route Sales" emptyDescription="Route sales will appear after van sales are recorded." /><DashboardTable title="Recovery History" rows={recoveries.slice(0, 10)} cols={['retailer_name', 'salesman_name', 'amount', 'payment_method', 'date']} emptyIcon={WalletCards} emptyTitle="No Recovery Data" emptyDescription="Recoveries collected from retailers will appear here." /></section></DashboardSection><DashboardSection title="Recent Activity"><RetailSalesPanel sales={sales} /></DashboardSection></div>;
 }
 
 function nearExpiryProducts(products) {
@@ -1394,7 +1443,7 @@ function HospitalDashboard({ data, auth, brand, refresh }) {
     await refresh();
     notify(`${saved.token_number || 'Token'} sent to reception. Token Slip button se print karein.`);
   }
-  return <div className="stack"><section className="panel"><div className="module-head"><div><h2>{hospitalFrontDeskRole(auth) ? 'Reception Desk' : 'Patient Desk'}</h2><p className="muted">Daily token queue, doctor recommendations, services and billing workflow.</p></div>{canCreatePatient && <div className="module-actions"><button className="primary-btn" onClick={() => setEditingPatient(newPatient())}><Plus size={16} /> Add Patient</button></div>}</div><DataTable rows={frontDeskRows.slice(0, 8)} columns={['token_number', 'mr_number', 'patient_name', 'phone', 'department', 'doctor_name', 'status']} onAdd={canCreatePatient ? () => setEditingPatient(newPatient()) : null} actions={(row) => <><button className="ghost-btn" onClick={() => printPatientTokenSlip(row, brand)}><Printer size={15} /> Token Slip</button><button className="ghost-btn" onClick={() => setEditingPatient(row)}><Edit3 size={15} /> Open File</button></>} /></section><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? value : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div><DashboardTable title="Recent Completed Patients" rows={recentCompleted} cols={['token_number', 'patient_name', 'diagnosis', 'medicines', 'tests', 'final_amount', 'paid_amount', 'completion_time']} emptyIcon={Users} emptyTitle="No Completed Patients" emptyDescription="Closed and paid patient cases will appear here." /><section className="split"><DashboardTable title={hospitalFrontDeskRole(auth) ? 'Today Reception Queue' : 'Doctor Treatment Status'} rows={frontDeskRows} cols={['token_number', 'mr_number', 'patient_name', 'visit_type', 'department', 'doctor_name', 'status']} emptyIcon={Users} emptyTitle="No Queue Available" emptyDescription="Doctor or assistant added patients will appear here." /><DashboardTable title="Follow Up Patients" rows={followUps} cols={['patient_name', 'phone', 'diagnosis', 'next_visit', 'status']} emptyIcon={Bell} emptyTitle="No Follow Ups" emptyDescription="Upcoming follow-up patients will appear here." /></section><section className="split"><DashboardTable title="Doctor Prescriptions" rows={data.hospital_prescriptions || []} cols={['token_number', 'patient_name', 'doctor_name', 'medicine_name', 'morning', 'afternoon', 'evening', 'night', 'days', 'status']} emptyIcon={Boxes} emptyTitle="No Pharmacy Tasks" emptyDescription="Doctor prescriptions will appear here." /><DashboardTable title="Doctor Recommended Tests / Services" rows={[...(data.hospital_tasks || []), ...pendingLab, ...pendingRadiology]} cols={['token_number', 'patient_name', 'task_name', 'test_name', 'study_type', 'status']} emptyIcon={FileText} emptyTitle="No Recommended Services" emptyDescription="Injection, X-Ray, lab and other recommendations will appear here." /></section><section className="split"><DashboardTable title="Medicine / Prescription History" rows={medicines} cols={['patient_name', 'medicine', 'medicine_days', 'next_visit', 'diagnosis', 'visit_date']} emptyIcon={FileText} emptyTitle="No Medicine History" emptyDescription="Medicine prescribed to patients will appear here." /><DashboardTable title="Pending Bills" rows={pendingBills} cols={['token_number', 'bill_number', 'patient_name', 'grand_total', 'paid', 'balance', 'status']} emptyIcon={Calculator} emptyTitle="No Pending Bills" emptyDescription="Auto-generated hospital bills will appear here." /></section>{editingPatient && <RecordModal title="Patient Management" fields={RESOURCES.patients.fields} record={editingPatient} context={{ auth, brand, assistants, catalogs: data.master_catalogs || [], medicines: data.medicines || [] }} onClose={() => setEditingPatient(null)} onSubmit={submitPatient} />}</div>;
+  return <div className="stack"><DashboardSection title="Financial Overview"><MetricGrid cards={financialCards(data)} /></DashboardSection><DashboardSection title="Inventory Overview"><MetricGrid cards={inventoryOverviewCards(data)} /></DashboardSection><section className="panel"><div className="module-head"><div><h2>{hospitalFrontDeskRole(auth) ? 'Reception Desk' : 'Patient Desk'}</h2><p className="muted">Daily token queue, doctor recommendations, services and billing workflow.</p></div>{canCreatePatient && <div className="module-actions"><button className="primary-btn" onClick={() => setEditingPatient(newPatient())}><Plus size={16} /> Add Patient</button></div>}</div><DataTable rows={frontDeskRows.slice(0, 8)} columns={['token_number', 'mr_number', 'patient_name', 'phone', 'department', 'doctor_name', 'status']} onAdd={canCreatePatient ? () => setEditingPatient(newPatient()) : null} actions={(row) => <><button className="ghost-btn" onClick={() => printPatientTokenSlip(row, brand)}><Printer size={15} /> Token Slip</button><button className="ghost-btn" onClick={() => setEditingPatient(row)}><Edit3 size={15} /> Open File</button></>} /></section><DashboardSection title="Business Metrics"><MetricGrid cards={cards} /></DashboardSection><DashboardSection title="Recent Activity"><DashboardTable title="Recent Completed Patients" rows={recentCompleted} cols={['token_number', 'patient_name', 'diagnosis', 'medicines', 'tests', 'final_amount', 'paid_amount', 'completion_time']} emptyIcon={Users} emptyTitle="No Completed Patients" emptyDescription="Closed and paid patient cases will appear here." /><section className="split"><DashboardTable title={hospitalFrontDeskRole(auth) ? 'Today Reception Queue' : 'Doctor Treatment Status'} rows={frontDeskRows} cols={['token_number', 'mr_number', 'patient_name', 'visit_type', 'department', 'doctor_name', 'status']} emptyIcon={Users} emptyTitle="No Queue Available" emptyDescription="Doctor or assistant added patients will appear here." /><DashboardTable title="Follow Up Patients" rows={followUps} cols={['patient_name', 'phone', 'diagnosis', 'next_visit', 'status']} emptyIcon={Bell} emptyTitle="No Follow Ups" emptyDescription="Upcoming follow-up patients will appear here." /></section><section className="split"><DashboardTable title="Doctor Prescriptions" rows={data.hospital_prescriptions || []} cols={['token_number', 'patient_name', 'doctor_name', 'medicine_name', 'morning', 'afternoon', 'evening', 'night', 'days', 'status']} emptyIcon={Boxes} emptyTitle="No Pharmacy Tasks" emptyDescription="Doctor prescriptions will appear here." /><DashboardTable title="Doctor Recommended Tests / Services" rows={[...(data.hospital_tasks || []), ...pendingLab, ...pendingRadiology]} cols={['token_number', 'patient_name', 'task_name', 'test_name', 'study_type', 'status']} emptyIcon={FileText} emptyTitle="No Recommended Services" emptyDescription="Injection, X-Ray, lab and other recommendations will appear here." /></section><section className="split"><DashboardTable title="Medicine / Prescription History" rows={medicines} cols={['patient_name', 'medicine', 'medicine_days', 'next_visit', 'diagnosis', 'visit_date']} emptyIcon={FileText} emptyTitle="No Medicine History" emptyDescription="Medicine prescribed to patients will appear here." /><DashboardTable title="Pending Bills" rows={pendingBills} cols={['token_number', 'bill_number', 'patient_name', 'grand_total', 'paid', 'balance', 'status']} emptyIcon={Calculator} emptyTitle="No Pending Bills" emptyDescription="Auto-generated hospital bills will appear here." /></section></DashboardSection>{editingPatient && <RecordModal title="Patient Management" fields={RESOURCES.patients.fields} record={editingPatient} context={{ auth, brand, assistants, catalogs: data.master_catalogs || [], medicines: data.medicines || [] }} onClose={() => setEditingPatient(null)} onSubmit={submitPatient} />}</div>;
 }
 
 function currentDoctorName(auth, brand) {
