@@ -664,6 +664,22 @@ function App() {
   }, [authenticated, allowedModules, active]);
 
   useEffect(() => {
+    if (!authenticated) return undefined;
+    const handler = () => {
+      window.clearTimeout(window.__msmRefreshTimer);
+      window.__msmRefreshTimer = window.setTimeout(() => refresh(), 120);
+    };
+    window.addEventListener('msm:record-deleted', handler);
+    window.addEventListener('msm:record-delete-synced', handler);
+    window.addEventListener('msm:product-saved', handler);
+    return () => {
+      window.removeEventListener('msm:record-deleted', handler);
+      window.removeEventListener('msm:record-delete-synced', handler);
+      window.removeEventListener('msm:product-saved', handler);
+    };
+  }, [authenticated, auth.token]);
+
+  useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
     document.body.classList.toggle('dark', dark);
     localStorage.setItem('msm_theme', dark ? 'dark' : 'light');
@@ -859,6 +875,7 @@ function inventoryRows(rows) {
 
 function productDisplayName(record = {}) {
   const baseName = record.product_name || record.name || record.brand_name || record.generic_name || record.model || '';
+  const medicineRecord = Boolean(record.brand_name || record.generic_name || record.dosage_form);
   const parts = [];
   const add = (value) => {
     const text = String(value || '').trim();
@@ -882,9 +899,8 @@ function productDisplayName(record = {}) {
   add(record.storage || record.memory);
   add(record.color);
   add(record.pack_size || record.strength);
-  add(record.unit || record.dosage_form);
+  if (medicineRecord) add(record.dosage_form);
   add(record.variant || record.variant_name);
-  add(record.variant_type);
 
   return parts.join(' ') || 'Product';
 }
@@ -901,7 +917,7 @@ function lineQuantityLabel(item = {}) {
 }
 
 function lineUnitLabel(item = {}) {
-  return item.selected_unit_label || item.selling_unit_label || item.selected_unit || item.selling_unit || '';
+  return item.selected_unit || item.selling_unit || '';
 }
 
 function lineConversionLabel(item = {}) {
@@ -1876,7 +1892,17 @@ function notify(message) {
 
 async function deleteEverywhere(store, row, mode) {
   await deleteRecord(store, row.uuid, mode);
-  runInBackground(() => deleteRemoteRecord(store, row.uuid, mode), store === 'master_catalogs' ? '' : 'Delete synced in background');
+  window.dispatchEvent(new CustomEvent('msm:record-deleted', { detail: { store, uuid: row.uuid, mode } }));
+  if (navigator.onLine && localStorage.getItem('dsh_token')) {
+    try {
+      await deleteRemoteRecord(store, row.uuid, mode);
+      await syncNow();
+      window.dispatchEvent(new CustomEvent('msm:record-delete-synced', { detail: { store, uuid: row.uuid, mode } }));
+    } catch (error) {
+      console.warn(error.message || 'Remote delete failed. It will retry later.');
+      notify(error.message || 'Remote delete failed. It will retry later.');
+    }
+  }
 }
 
 function runInBackground(task, successMessage) {
@@ -3294,7 +3320,7 @@ function printInvoice(sale, cart = [], brand = {}, format = 'a4') {
   const settlement = payment.changeReturn > 0
     ? `<p><strong>Change Return:</strong> ${money(payment.changeReturn)}</p>`
     : `<p><strong>Due Amount:</strong> ${money(payment.dueAmount)}</p>`;
-  const html = `<section class="receipt-shell ${receiptFormatClass(format)}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p><strong>Invoice Number:</strong> ${sale.invoice_number || ''}</p><p><strong>Customer:</strong> ${sale.customer_name || 'Walk-in Customer'}</p><p><strong>Date:</strong> ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Item</th><th>Unit</th><th>Conversion</th><th>IMEI / Serial</th><th>Qty</th><th>Rate</th><th>Total</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${saleLineDisplayName(item)}</td><td>${lineUnitLabel(item)}</td><td>${lineConversionLabel(item)}</td><td>${imeiListText(item)}</td><td>${lineQuantityLabel(item)}</td><td>${money(item.price)}</td><td>${money(lineTotal(item))}</td></tr>`).join('') : `<tr><td colspan="7">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Grand Total: ${money(payment.total)}</h3><p><strong>Payment Method:</strong> ${payment.method}</p><p><strong>Paid Amount:</strong> ${money(payment.paid)}</p>${settlement}<p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
+  const html = `<section class="receipt-shell ${receiptFormatClass(format)}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p><strong>Invoice Number:</strong> ${sale.invoice_number || ''}</p><p><strong>Customer:</strong> ${sale.customer_name || 'Walk-in Customer'}</p><p><strong>Date:</strong> ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Product</th><th>Sold As</th><th>Contains</th><th>IMEI / Serial</th><th>Qty</th><th>Rate</th><th>Total</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${saleLineDisplayName(item)}</td><td>${lineUnitLabel(item)}</td><td>${lineConversionLabel(item)}</td><td>${imeiListText(item)}</td><td>${lineQuantityLabel(item)}</td><td>${money(item.price)}</td><td>${money(lineTotal(item))}</td></tr>`).join('') : `<tr><td colspan="7">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Grand Total: ${money(payment.total)}</h3><p><strong>Payment Method:</strong> ${payment.method}</p><p><strong>Paid Amount:</strong> ${money(payment.paid)}</p>${settlement}<p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
   printHtml(`Invoice ${sale.invoice_number}`, html);
 }
 
@@ -3335,7 +3361,7 @@ function invoicePdfLines(invoice, cart, brand = {}) {
     brand?.contact_number || '',
     `Invoice Number: ${invoice.invoice_number}`,
     `Customer Name: ${invoice.customer_name || 'Walk-in Customer'}`,
-    ...cart.map((item) => `${saleLineDisplayName(item)} | Unit: ${lineUnitLabel(item)} | Conversion: ${lineConversionLabel(item)} | Qty: ${lineQuantityLabel(item)} | Rate: ${money(item.price)} | Total: ${money(lineTotal(item))}${imeiListText(item) ? ` | IMEI: ${imeiListText(item)}` : ''}`),
+    ...cart.map((item) => `${saleLineDisplayName(item)} | Sold As: ${lineUnitLabel(item)} | Contains: ${lineConversionLabel(item)} | Qty: ${lineQuantityLabel(item)} | Rate: ${money(item.price)} | Total: ${money(lineTotal(item))}${imeiListText(item) ? ` | IMEI: ${imeiListText(item)}` : ''}`),
     `Subtotal: ${money(invoice.subtotal)}`,
     `Discount: ${money(invoice.discount)}`,
     `Tax: ${money(invoice.tax)}`,
@@ -3351,7 +3377,7 @@ function invoiceMessage(invoice, brand = {}, cart = []) {
   const payment = paymentDisplay(invoice);
   const items = cart.length ? `\nItems:\n${cart.map((item) => {
     const imei = imeiListText(item);
-    return `- ${saleLineDisplayName(item)}\n  Unit: ${lineUnitLabel(item)}\n  Conversion: ${lineConversionLabel(item)}\n  Qty: ${lineQuantityLabel(item)}\n  Rate: ${money(item.price || 0)}\n  Total: ${money(lineTotal(item))}${imei ? `\n  IMEI: ${imei}` : ''}`;
+    return `- ${saleLineDisplayName(item)}\n  Sold As: ${lineUnitLabel(item)}\n  Contains: ${lineConversionLabel(item)}\n  Qty: ${lineQuantityLabel(item)}\n  Rate: ${money(item.price || 0)}\n  Total: ${money(lineTotal(item))}${imei ? `\n  IMEI: ${imei}` : ''}`;
   }).join('\n')}` : '';
   const status = invoice.status || (payment.dueAmount > 0 ? 'Credit Due' : 'Paid');
   const settlement = payment.changeReturn > 0 ? `Change Return: ${money(payment.changeReturn)}` : `Due Amount: ${money(payment.dueAmount)}`;

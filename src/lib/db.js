@@ -410,6 +410,7 @@ export async function deleteRecord(store, uuid, mode = 'soft') {
   if (store === 'patients') {
     await deletePatientWorkflowLocally(db, current.uuid, mode);
   }
+  await deleteRelatedRecordsLocally(db, store, current, mode);
   if (mode === 'permanent') {
     await db.delete(store, uuid);
     if (store === 'licenses') await cleanupLicenseStorage(db);
@@ -422,6 +423,77 @@ export async function deleteRecord(store, uuid, mode = 'soft') {
   if (store === 'licenses') await cleanupLicenseStorage(db);
   await queueOperation(store, uuid, 'delete', deleted);
   await auditLog('soft_delete', store, uuid, deleted);
+}
+
+async function deleteRelatedRecordsLocally(db, store, current, mode = 'soft') {
+  const rules = {
+    sales: [
+      ['sale_items', ['sale_uuid', 'sale_id']],
+      ['sale_returns', ['sale_uuid', 'sale_id']],
+      ['imei_movements', ['sale_uuid', 'sale_id']],
+      ['warranty_claims', ['sale_uuid', 'sale_id']],
+      ['customer_ledgers', ['reference']],
+      ['cashbook', ['reference']],
+    ],
+    purchases: [
+      ['purchase_items', ['purchase_uuid', 'purchase_id']],
+      ['purchase_returns', ['purchase_uuid', 'purchase_id']],
+      ['supplier_ledgers', ['reference']],
+      ['cashbook', ['reference']],
+    ],
+    products: [
+      ['sale_items', ['product_uuid', 'product_id']],
+      ['purchase_items', ['product_uuid', 'product_id']],
+      ['sale_return_items', ['product_uuid', 'product_id']],
+      ['purchase_return_items', ['product_uuid', 'product_id']],
+      ['inventory_transactions', ['product_uuid', 'product_id']],
+      ['imei_registry', ['product_uuid', 'product_id']],
+      ['imei_movements', ['product_uuid', 'product_id']],
+      ['warranty_claims', ['product_uuid', 'product_id']],
+    ],
+    customers: [
+      ['customer_ledgers', ['customer_uuid', 'customer_id']],
+    ],
+    suppliers: [
+      ['supplier_ledgers', ['supplier_uuid', 'supplier_id']],
+    ],
+    trader_retailers: [
+      ['trader_recoveries', ['retailer_uuid']],
+      ['trader_delivery_challans', ['retailer_uuid']],
+    ],
+  }[store] || [];
+
+  for (const [relatedStore, keys] of rules) {
+    if (!STORE_NAMES.includes(relatedStore)) continue;
+    const rows = await db.getAll(relatedStore);
+    for (const row of rows.filter((candidate) => relatedRecordMatches(candidate, current, keys))) {
+      await deleteRelatedRow(db, relatedStore, row, mode);
+    }
+  }
+}
+
+function relatedRecordMatches(row = {}, parent = {}, keys = []) {
+  return keys.some((key) => {
+    const parentValue = key.endsWith('_id') ? parent.id : parent.uuid;
+    if (key === 'reference') {
+      return [parent.uuid, parent.invoice_number, parent.purchase_number, parent.bill_number].filter(Boolean).includes(row.reference);
+    }
+    return parentValue !== undefined && parentValue !== null && String(row[key] || '') === String(parentValue);
+  });
+}
+
+async function deleteRelatedRow(db, store, row, mode = 'soft') {
+  const now = new Date().toISOString();
+  if (mode === 'permanent') {
+    await db.delete(store, row.uuid);
+    await queueOperation(store, row.uuid, 'force_delete', { ...row, permanently_deleted_at: now });
+    await auditLog('permanent_delete', store, row.uuid, row);
+    return;
+  }
+  const deleted = { ...row, deleted_at: row.deleted_at || now, sync_status: 'pending' };
+  await db.put(store, deleted);
+  await queueOperation(store, row.uuid, 'delete', deleted);
+  await auditLog('soft_delete', store, row.uuid, deleted);
 }
 
 export async function barcodeLookup(scan, data = null, options = {}) {
