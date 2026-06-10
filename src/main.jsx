@@ -1482,6 +1482,7 @@ function BackupModule({ data, auth, brand, refresh }) {
 function Inventory({ rows, brand, refresh }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
+  const [duplicateWarning, setDuplicateWarning] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [receiving, setReceiving] = useState({ scan: '', quantity: 1, cost_price: '', batch_number: '', expiry_date: '' });
@@ -1507,18 +1508,57 @@ function Inventory({ rows, brand, refresh }) {
 
   async function submit(event) {
     event.preventDefault();
-    const duplicate = duplicateProductBarcode(rows, editing);
-    if (duplicate) {
-      notify(`${duplicate.field} already assigned to ${duplicate.product.product_name}`);
+    const draft = calculatedProduct(editing);
+    const conflicts = duplicateProductConflicts(rows, draft);
+    if (conflicts.length) {
+      setDuplicateWarning({ draft, conflicts, product: conflicts[0].product });
       return;
     }
-    const product = await saveRecord('products', calculatedProduct(editing));
+    await saveProductDraft(draft);
+  }
+
+  async function saveProductDraft(draft, auditAction = draft?.uuid ? 'Product Edited' : 'Product Created') {
+    const product = await saveRecord('products', calculatedProduct(draft));
     window.dispatchEvent(new CustomEvent('msm:product-saved', { detail: product }));
     runInBackground(() => saveRemoteRecord('products', product), 'Inventory synced in background');
     setEditing(null);
+    setDuplicateWarning(null);
     await refresh();
     await auditProductHydration(product);
+    await auditInventoryAction(auditAction, product);
     notify('Product saved successfully');
+  }
+
+  async function keepExistingDuplicate() {
+    const sanitized = clearDuplicateIdentityFields(duplicateWarning.draft, duplicateWarning.conflicts);
+    await auditInventoryAction('Duplicate Warning', sanitized, {
+      duplicate_fields: duplicateWarning.conflicts.map((conflict) => conflict.key),
+      resolution: 'keep_existing_identifiers',
+    });
+    await saveProductDraft(sanitized, sanitized.uuid ? 'Product Edited' : 'Product Created');
+  }
+
+  async function mergeDuplicateDraft() {
+    const target = duplicateWarning.product;
+    const draft = duplicateWarning.draft;
+    const merged = calculatedProduct({
+      ...target,
+      ...nonEmptyProductFields(draft, target),
+      uuid: target.uuid,
+      quantity: Number(target.quantity || 0) + (draft.uuid ? 0 : Number(draft.quantity || 0)),
+      product_name: target.product_name || draft.product_name,
+      brand: target.brand || draft.brand,
+      pack_size: target.pack_size || draft.pack_size,
+      unit: target.unit || draft.unit,
+    });
+    await auditInventoryAction('Product Merged', merged, {
+      source_uuid: draft.uuid || 'new_product_draft',
+      target_uuid: target.uuid,
+      duplicate_fields: duplicateWarning.conflicts.map((conflict) => conflict.key),
+    });
+    setEditing(merged);
+    setDuplicateWarning(null);
+    notify('Merged into existing product draft. Review and save to confirm.');
   }
 
   async function remove(row, mode) {
@@ -1555,7 +1595,7 @@ function Inventory({ rows, brand, refresh }) {
   }
 
   const edit = calculatedProduct(editing || blank);
-  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><form className="inline-form" onSubmit={receiveScan}><UniversalProductLookup autoFocus value={receiving.scan} data={{ products: rows }} onChange={(value) => { setReceiving({ ...receiving, scan: value }); setReceivingMatch(null); }} onPick={(match) => { setReceivingMatch(match); setReceiving({ ...receiving, scan: match.product?.barcode || match.product?.sku || productDisplayName(match.product) || receiving.scan, cost_price: receiving.cost_price || match.product?.purchase_price || '' }); }} /><input type="number" min="1" value={receiving.quantity} onChange={(event) => setReceiving({ ...receiving, quantity: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Cost" value={receiving.cost_price} onChange={(event) => setReceiving({ ...receiving, cost_price: event.target.value })} /><input placeholder="Batch" value={receiving.batch_number} onChange={(event) => setReceiving({ ...receiving, batch_number: event.target.value })} /><input type="date" value={receiving.expiry_date} onChange={(event) => setReceiving({ ...receiving, expiry_date: event.target.value })} /><button className="ghost-btn" disabled={!receiving.scan}><Plus size={15} /> Receive Scan</button></form>{receivingMatch?.product && <div className="lookup-selected"><strong>{productDisplayName(receivingMatch.product)}</strong><span>{receivingMatch.product.brand || 'No brand'} - {receivingMatch.product.category || 'No category'} - {receivingMatch.product.unit || 'Unit'} - Stock {receivingMatch.product.quantity || 0} - {money(receivingMatch.product.sale_price || 0)}</span></div>}<input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(calculatedProduct(row))}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Product Detail" row={viewing} columns={[...columns, 'barcode', 'secondary_barcode', 'qr_code', 'product_code', 'box_barcode', 'carton_barcode', 'sku', 'variant_type', 'pack_size', 'batch_number', 'expiry_date', 'imei_numbers', 'manufacturer', 'warranty', 'supplier_name']} onClose={() => setViewing(null)} />}{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={edit.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={edit.category || categoryOptions[0]} onChange={(event) => change('category', event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={edit.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label><label>SKU<input value={edit.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Product Code<input value={edit.product_code || ''} onChange={(event) => change('product_code', event.target.value)} /></label><label>Barcode<input value={edit.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Secondary Barcode<input value={edit.secondary_barcode || ''} onChange={(event) => change('secondary_barcode', event.target.value)} /></label><label>QR Code<input value={edit.qr_code || ''} onChange={(event) => change('qr_code', event.target.value)} /></label><label>Box Barcode<input value={edit.box_barcode || ''} onChange={(event) => change('box_barcode', event.target.value)} /></label><label>Carton Barcode<input value={edit.carton_barcode || ''} onChange={(event) => change('carton_barcode', event.target.value)} /></label><label>Unit<select value={edit.unit || 'Single Unit'} onChange={(event) => change('unit', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Variant Type<select value={edit.variant_type || edit.unit || 'Single Unit'} onChange={(event) => change('variant_type', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Pack Size<input value={edit.pack_size || ''} onChange={(event) => change('pack_size', event.target.value)} /></label><label>Boxes / Packs Qty<input type="number" min="0" value={edit.package_quantity || 0} onChange={(event) => change('package_quantity', event.target.value)} /></label><label>Pcs Per Box / Pack<input type="number" min="1" value={edit.units_per_package || 1} onChange={(event) => change('units_per_package', event.target.value)} /></label><label>Loose Pcs<input type="number" min="0" value={edit.loose_quantity || 0} onChange={(event) => change('loose_quantity', event.target.value)} /></label><label>Total Stock Pcs<input type="number" readOnly value={edit.quantity || 0} /></label><label>Cost Per Pc<input type="number" min="0" step="0.01" value={edit.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label><label>Cost Per Box / Pack<input type="number" readOnly value={edit.package_cost_price || 0} /></label><label>Total Cost<input type="number" readOnly value={edit.total_cost || 0} /></label><label>Sale Price Per Pc<input type="number" min="0" step="0.01" value={edit.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Low Stock Warning<input type="number" min="0" value={edit.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label><label>Batch Number<input value={edit.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label><label>Expiry Date<input type="date" value={edit.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label><label>IMEI Numbers<textarea rows="3" value={imeiListText(edit)} onChange={(event) => { change('imei_numbers', event.target.value); change('imei', event.target.value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)[0] || ''); }} /></label><label>Manufacturer<input value={edit.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label><label>Warranty<input value={edit.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label><label>Supplier<input value={edit.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div><PackagingBuilder product={edit} onChange={change} /><div className="totals inventory-total"><span>Total Stock: <strong>{edit.quantity || 0} pcs</strong></span><span>Per Box Cost: <strong>{money(edit.package_cost_price)}</strong></span><span>Total Cost: <strong>{money(edit.total_cost)}</strong></span></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><form className="inline-form" onSubmit={receiveScan}><UniversalProductLookup autoFocus value={receiving.scan} data={{ products: rows }} onChange={(value) => { setReceiving({ ...receiving, scan: value }); setReceivingMatch(null); }} onPick={(match) => { setReceivingMatch(match); setReceiving({ ...receiving, scan: match.product?.barcode || match.product?.sku || productDisplayName(match.product) || receiving.scan, cost_price: receiving.cost_price || match.product?.purchase_price || '' }); }} /><input type="number" min="1" value={receiving.quantity} onChange={(event) => setReceiving({ ...receiving, quantity: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Cost" value={receiving.cost_price} onChange={(event) => setReceiving({ ...receiving, cost_price: event.target.value })} /><input placeholder="Batch" value={receiving.batch_number} onChange={(event) => setReceiving({ ...receiving, batch_number: event.target.value })} /><input type="date" value={receiving.expiry_date} onChange={(event) => setReceiving({ ...receiving, expiry_date: event.target.value })} /><button className="ghost-btn" disabled={!receiving.scan}><Plus size={15} /> Receive Scan</button></form>{receivingMatch?.product && <div className="lookup-selected"><strong>{productDisplayName(receivingMatch.product)}</strong><span>{receivingMatch.product.brand || 'No brand'} - {receivingMatch.product.category || 'No category'} - {receivingMatch.product.unit || 'Unit'} - Stock {receivingMatch.product.quantity || 0} - {money(receivingMatch.product.sale_price || 0)}</span></div>}<input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(calculatedProduct(row))}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Product Detail" row={viewing} columns={[...columns, 'barcode', 'secondary_barcode', 'qr_code', 'product_code', 'box_barcode', 'carton_barcode', 'sku', 'variant_type', 'pack_size', 'batch_number', 'expiry_date', 'imei_numbers', 'manufacturer', 'warranty', 'supplier_name']} onClose={() => setViewing(null)} />}{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={edit.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={edit.category || categoryOptions[0]} onChange={(event) => change('category', event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={edit.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label><label>SKU<input value={edit.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Product Code<input value={edit.product_code || ''} onChange={(event) => change('product_code', event.target.value)} /></label><label>Barcode<input value={edit.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Secondary Barcode<input value={edit.secondary_barcode || ''} onChange={(event) => change('secondary_barcode', event.target.value)} /></label><label>QR Code<input value={edit.qr_code || ''} onChange={(event) => change('qr_code', event.target.value)} /></label><label>Box Barcode<input value={edit.box_barcode || ''} onChange={(event) => change('box_barcode', event.target.value)} /></label><label>Carton Barcode<input value={edit.carton_barcode || ''} onChange={(event) => change('carton_barcode', event.target.value)} /></label><label>Unit<select value={edit.unit || 'Single Unit'} onChange={(event) => change('unit', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Variant Type<select value={edit.variant_type || edit.unit || 'Single Unit'} onChange={(event) => change('variant_type', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Pack Size<input value={edit.pack_size || ''} onChange={(event) => change('pack_size', event.target.value)} /></label><label>Boxes / Packs Qty<input type="number" min="0" value={edit.package_quantity || 0} onChange={(event) => change('package_quantity', event.target.value)} /></label><label>Pcs Per Box / Pack<input type="number" min="1" value={edit.units_per_package || 1} onChange={(event) => change('units_per_package', event.target.value)} /></label><label>Loose Pcs<input type="number" min="0" value={edit.loose_quantity || 0} onChange={(event) => change('loose_quantity', event.target.value)} /></label><label>Total Stock Pcs<input type="number" readOnly value={edit.quantity || 0} /></label><label>Cost Per Pc<input type="number" min="0" step="0.01" value={edit.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label><label>Cost Per Box / Pack<input type="number" readOnly value={edit.package_cost_price || 0} /></label><label>Total Cost<input type="number" readOnly value={edit.total_cost || 0} /></label><label>Sale Price Per Pc<input type="number" min="0" step="0.01" value={edit.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Low Stock Warning<input type="number" min="0" value={edit.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label><label>Batch Number<input value={edit.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label><label>Expiry Date<input type="date" value={edit.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label><label>IMEI Numbers<textarea rows="3" value={imeiListText(edit)} onChange={(event) => { change('imei_numbers', event.target.value); change('imei', event.target.value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)[0] || ''); }} /></label><label>Manufacturer<input value={edit.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label><label>Warranty<input value={edit.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label><label>Supplier<input value={edit.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div><PackagingBuilder product={edit} onChange={change} /><div className="totals inventory-total"><span>Total Stock: <strong>{edit.quantity || 0} pcs</strong></span><span>Per Box Cost: <strong>{money(edit.package_cost_price)}</strong></span><span>Total Cost: <strong>{money(edit.total_cost)}</strong></span></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{duplicateWarning && <DuplicateProductDialog warning={duplicateWarning} onClose={() => setDuplicateWarning(null)} onKeepExisting={keepExistingDuplicate} onMerge={mergeDuplicateDraft} />}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function calculatedProduct(record) {
@@ -1657,7 +1697,7 @@ async function auditProductHydration(product) {
   return false;
 }
 
-function duplicateProductBarcode(rows = [], record = {}) {
+function duplicateProductConflicts(rows = [], record = {}) {
   const labels = {
     barcode: 'Barcode',
     secondary_barcode: 'Secondary barcode',
@@ -1667,13 +1707,60 @@ function duplicateProductBarcode(rows = [], record = {}) {
     box_barcode: 'Box barcode',
     carton_barcode: 'Carton barcode',
   };
+  const conflicts = [];
   for (const field of Object.keys(labels)) {
     const value = String(record?.[field] || '').trim().toLowerCase();
     if (!value) continue;
     const product = rows.find((row) => row.uuid !== record.uuid && String(row?.[field] || '').trim().toLowerCase() === value);
-    if (product) return { field: labels[field], product };
+    if (product) conflicts.push({ key: field, field: labels[field], product, value: record[field] });
   }
-  return null;
+  return conflicts;
+}
+
+function duplicateProductBarcode(rows = [], record = {}) {
+  return duplicateProductConflicts(rows, record)[0] || null;
+}
+
+function clearDuplicateIdentityFields(record = {}, conflicts = []) {
+  const next = { ...record };
+  for (const conflict of conflicts) {
+    next[conflict.key] = '';
+  }
+  return calculatedProduct(next);
+}
+
+function nonEmptyProductFields(source = {}, target = {}) {
+  const allowed = [
+    'product_name', 'category', 'brand', 'model', 'pack_size', 'unit', 'variant_type',
+    'manufacturer', 'warranty', 'supplier_name', 'low_stock_threshold', 'purchase_price',
+    'sale_price', 'packaging_units',
+  ];
+  return Object.fromEntries(allowed
+    .filter((key) => source[key] !== undefined && source[key] !== null && String(source[key]).trim() !== '' && !target[key])
+    .map((key) => [key, source[key]]));
+}
+
+async function auditInventoryAction(action, product, metadata = {}) {
+  try {
+    await saveRecord('audit_logs', {
+      action,
+      entity: 'products',
+      entity_uuid: product?.uuid || metadata?.target_uuid || crypto.randomUUID(),
+      details: `${action}: ${productDisplayName(product || {}) || 'Inventory product'}`,
+      metadata: { product, ...metadata },
+      created_at: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.warn('Inventory audit log failed', error.message);
+  }
+}
+
+function DuplicateProductDialog({ warning, onClose, onKeepExisting, onMerge }) {
+  const firstProduct = warning?.product || {};
+  const conflictText = (warning?.conflicts || [])
+    .map((conflict) => `${conflict.field}: ${conflict.value}`)
+    .join(', ');
+  return <ModalShell onClose={onClose} size="small"><div className="modal-header"><h2>Duplicate Product Warning</h2><button type="button" className="icon-btn" onClick={onClose} title="Close"><X size={17} /></button></div><div className="modal-body"><p className="muted">This product shares an identity field with an existing product. Same-name products are allowed, but barcode, SKU, QR and product code values must stay unique inside this shop.</p><div className="lookup-selected"><strong>{productDisplayName(firstProduct)}</strong><span>{conflictText}</span></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={onClose}>Cancel</button><div className="button-row"><button type="button" className="ghost-btn" onClick={onMerge}>Merge Product</button><button type="button" className="primary-btn" onClick={onKeepExisting}>Keep Existing</button></div></div></ModalShell>;
 }
 
 function UniversalProductLookup({ value, onChange, onPick, data, placeholder = 'Scan / Search Product', autoFocus = false }) {

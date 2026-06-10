@@ -108,7 +108,6 @@ export async function cleanupStartupData() {
   const db = await database();
   const plans = [
     ['customers', (row) => row.phone || row.cnic || row.uuid],
-    ['products', productDedupeKey],
     ['repairs', (row) => row.job_number || `${row.imei || ''}-${row.customer_name || ''}` || row.uuid],
     ['sales', (row) => row.invoice_number || row.uuid],
     ['licenses', (row) => row.license_key || row.activation_code || `${row.owner_name || ''}-${row.device_id || ''}-${row.type || ''}` || row.uuid],
@@ -131,7 +130,15 @@ export async function cleanupStartupData() {
     for (const row of active) {
       const key = scopedDedupeKey(store, row, keyFor(row));
       const keeper = groups.get(key);
-      if (keeper && keeper.uuid !== row.uuid) await db.delete(store, row.uuid);
+      if (keeper && keeper.uuid !== row.uuid) {
+        await db.put(store, {
+          ...row,
+          quarantined_at: row.quarantined_at || new Date().toISOString(),
+          quarantine_reason: 'startup_duplicate_cleanup',
+          sync_status: 'pending',
+        });
+        await auditLog('duplicate_quarantine', store, row.uuid, row);
+      }
     }
   }
 
@@ -522,32 +529,7 @@ async function cacheBarcodeLookup(payload = {}) {
 }
 
 function productDedupeKey(row = {}) {
-  const direct = [
-    row.imei,
-    row.imei_1,
-    row.barcode,
-    row.secondary_barcode,
-    row.qr_code,
-    row.box_barcode,
-    row.carton_barcode,
-    row.sku,
-    row.product_code,
-  ].find((value) => String(value || '').trim());
-  if (direct) return direct;
-
-  const variantKey = [
-    row.product_name || row.name,
-    row.brand,
-    row.category,
-    row.model,
-    row.pack_size,
-    row.unit,
-    row.variant_type,
-    row.units_per_package,
-    row.sale_price,
-  ].map((value) => String(value || '').trim().toLowerCase()).join('|');
-
-  return variantKey.replaceAll('|', '') ? variantKey : row.uuid;
+  return row.uuid;
 }
 
 async function localBarcodeLookup(scan, data = null, options = {}) {
