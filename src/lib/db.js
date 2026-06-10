@@ -702,9 +702,9 @@ function localPackagingUnits(product = {}) {
   const parsed = parseLocalPackagingUnits(product.packaging_units);
   const rows = parsed.map((unit, index) => ({
     ...unit,
-    key: String(unit.key || unit.unit || unit.label || `level_${index + 1}`).toLowerCase().replaceAll(' ', '_'),
+    key: String(unit.key || unit.unit || unit.unit_name || unit.label || `level_${index + 1}`).toLowerCase().replaceAll(' ', '_'),
     parent_key: String(unit.parent_key || unit.parent || unit.contains_unit || 'base').toLowerCase().replaceAll(' ', '_'),
-    conversion_quantity: Math.max(1, Number(unit.conversion_quantity || unit.contains || unit.factor || unit.conversion_factor || 1)),
+    conversion_quantity: Math.max(1, Number(unit.conversion_quantity || unit.contains_quantity || unit.contains || unit.qty || unit.factor || unit.conversion_factor || unit.stock_factor || 1)),
   }));
   const byKey = new Map(rows.map((row) => [row.key, row]));
   const factorFor = (row, seen = new Set()) => {
@@ -715,9 +715,9 @@ function localPackagingUnits(product = {}) {
   };
   const jsonUnits = rows.map((row) => ({
     key: row.key,
-    unit: row.unit || row.label || row.key,
-    label: row.label || `${row.unit || row.label || row.key} (${factorFor(row)} ${pluralLocalUnit(baseUnit)})`,
-    barcode: row.barcode || row.code || '',
+    unit: row.unit || row.unit_name || row.label || row.key,
+    label: row.label || `${row.unit || row.unit_name || row.label || row.key} (${factorFor(row)} ${pluralLocalUnit(baseUnit)})`,
+    barcode: row.barcode || row.secondary_barcode || row.qr_code || row.code || '',
     factor: factorFor(row),
   }));
   return [
@@ -729,10 +729,20 @@ function localPackagingUnits(product = {}) {
 
 function parseLocalPackagingUnits(value) {
   if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object') {
+    if (Array.isArray(value.units)) return value.units;
+    if (Array.isArray(value.levels)) return value.levels;
+    if (Array.isArray(value.packaging_units)) return value.packaging_units;
+    return [];
+  }
   if (!value || typeof value !== 'string') return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
+    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed?.units)) return parsed.units;
+    if (Array.isArray(parsed?.levels)) return parsed.levels;
+    if (Array.isArray(parsed?.packaging_units)) return parsed.packaging_units;
+    return [];
   } catch {
     return [];
   }

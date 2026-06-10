@@ -759,10 +759,14 @@ function App() {
     window.addEventListener('msm:record-deleted', handler);
     window.addEventListener('msm:record-delete-synced', handler);
     window.addEventListener('msm:product-saved', handler);
+    window.addEventListener('msm:inventory-refresh', handler);
+    window.addEventListener('msm:dashboard-refresh', handler);
     return () => {
       window.removeEventListener('msm:record-deleted', handler);
       window.removeEventListener('msm:record-delete-synced', handler);
       window.removeEventListener('msm:product-saved', handler);
+      window.removeEventListener('msm:inventory-refresh', handler);
+      window.removeEventListener('msm:dashboard-refresh', handler);
     };
   }, [authenticated, auth.token]);
 
@@ -1025,6 +1029,11 @@ function lineStockQuantity(item = {}) {
   return Math.max(1, Number(item.stock_quantity || 0) || (Number(item.quantity || 1) * Number(item.conversion_factor || 1)));
 }
 
+function broadcastInventoryRefresh(detail = {}) {
+  window.dispatchEvent(new CustomEvent('msm:inventory-refresh', { detail }));
+  window.dispatchEvent(new CustomEvent('msm:dashboard-refresh', { detail }));
+}
+
 function packagingUnits(product = {}) {
   const parsed = parsePackagingUnits(product.packaging_units);
   const baseUnit = productBaseUnit(product);
@@ -1064,27 +1073,39 @@ function packagingUnits(product = {}) {
 
 function parsePackagingUnits(value) {
   if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object') {
+    if (Array.isArray(value.units)) return value.units;
+    if (Array.isArray(value.levels)) return value.levels;
+    if (Array.isArray(value.packaging_units)) return value.packaging_units;
+    return [];
+  }
   if (!value || typeof value !== 'string') return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
+    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed?.units)) return parsed.units;
+    if (Array.isArray(parsed?.levels)) return parsed.levels;
+    if (Array.isArray(parsed?.packaging_units)) return parsed.packaging_units;
+    return [];
   } catch {
     return [];
   }
 }
 
 function normalizePackagingUnit(unit = {}, base = {}) {
-  const factor = Math.max(1, Number(unit.conversion_factor || unit.factor || unit.contains || 1));
-  const label = unit.label || unit.name || unit.unit || 'Piece';
+  const factor = Math.max(1, Number(unit.stock_factor || unit.conversion_factor || unit.factor || unit.conversion_quantity || unit.contains_quantity || unit.contains || unit.qty || 1));
+  const rawLabel = unit.label || unit.name || unit.unit_name || unit.unit || 'Piece';
+  const label = String(rawLabel).trim() || 'Piece';
   const baseUnit = base.unit || base.base_unit || 'Piece';
+  const unitName = unit.unit || unit.unit_name || label.replace(/\s*\(.*/, '');
   return {
-    key: String(unit.key || label).toLowerCase().replaceAll(' ', '_'),
+    key: String(unit.key || unitName || label).toLowerCase().replaceAll(' ', '_'),
     label: factor > 1 && !String(label).includes('(') ? `${label} (${factor} ${pluralUnit(baseUnit)})` : label,
-    unit: unit.unit || label,
+    unit: unitName,
     factor,
-    sale_price: Number(unit.sale_price || unit.price || 0) || Number(base.sale_price || 0) * factor,
-    purchase_price: Number(unit.purchase_price || unit.cost_price || 0) || Number(base.purchase_price || 0) * factor,
-    barcode: unit.barcode || unit.code || '',
+    sale_price: Number(unit.sale_price || unit.unit_sale_price || unit.price || unit.default_price || 0) || Number(base.sale_price || 0) * factor,
+    purchase_price: Number(unit.purchase_price || unit.unit_cost_price || unit.cost_price || unit.default_cost || 0) || Number(base.purchase_price || 0) * factor,
+    barcode: unit.barcode || unit.secondary_barcode || unit.qr_code || unit.code || '',
     base_unit: baseUnit,
   };
 }
@@ -1092,9 +1113,9 @@ function normalizePackagingUnit(unit = {}, base = {}) {
 function hierarchyPackagingUnits(units = [], base = {}) {
   const rows = units.map((unit, index) => ({
     ...unit,
-    key: String(unit.key || unit.unit || unit.label || `level_${index + 1}`).toLowerCase().replaceAll(' ', '_'),
+    key: String(unit.key || unit.unit || unit.unit_name || unit.label || `level_${index + 1}`).toLowerCase().replaceAll(' ', '_'),
     parent_key: String(unit.parent_key || unit.parent || unit.contains_unit || 'base').toLowerCase().replaceAll(' ', '_'),
-    conversion_quantity: Math.max(1, Number(unit.conversion_quantity || unit.contains || unit.factor || unit.conversion_factor || 1)),
+    conversion_quantity: Math.max(1, Number(unit.conversion_quantity || unit.contains_quantity || unit.contains || unit.qty || unit.factor || unit.conversion_factor || unit.stock_factor || 1)),
   }));
   const byKey = new Map(rows.map((row) => [row.key, row]));
   const factorFor = (row, seen = new Set()) => {
@@ -1107,7 +1128,7 @@ function hierarchyPackagingUnits(units = [], base = {}) {
     ...row,
     factor: factorFor(row),
     conversion_factor: factorFor(row),
-    label: row.label || `${row.unit || row.name || row.key} (${factorFor(row)} ${pluralUnit(base.unit || 'Piece')})`,
+    label: row.label || `${row.unit || row.unit_name || row.name || row.key} (${factorFor(row)} ${pluralUnit(base.unit || 'Piece')})`,
   }));
 }
 
@@ -1147,12 +1168,13 @@ function unitForMatch(product = {}, match = {}) {
 function stockPackagingBreakdown(product = {}) {
   const total = Math.max(0, Math.floor(Number(product.quantity || 0)));
   const units = packagingUnits(product).filter((unit) => Number(unit.factor || 1) > 1).sort((a, b) => Number(b.factor || 1) - Number(a.factor || 1));
-  if (!units.length || total === 0) return { base: total, text: `${total} ${pluralUnit(product.unit || product.variant_type || 'Piece')}` };
+  const baseUnit = productBaseUnit(product);
+  if (!units.length || total === 0) return { base: total, text: `${total} ${pluralUnit(baseUnit)}` };
   const parts = units.map((unit) => {
     const factor = Math.max(1, Number(unit.factor || 1));
     const count = Math.floor(total / factor);
     const loose = total % factor;
-    return `${count} ${pluralUnit(unit.unit || unit.label)}${loose ? ` + ${loose} ${pluralUnit(product.unit || product.variant_type || 'Piece')}` : ''}`;
+    return `${count} ${pluralUnit(unit.unit || unit.label)}${loose ? ` + ${loose} ${pluralUnit(baseUnit)}` : ''}`;
   }).filter(Boolean);
   let remaining = total;
   const largestParts = [];
@@ -1164,13 +1186,13 @@ function stockPackagingBreakdown(product = {}) {
       remaining -= count * factor;
     }
   }
-  if (remaining > 0) parts.push(`${remaining} ${pluralUnit(product.unit || product.variant_type || 'Piece')}`);
-  return { base: total, text: largestParts.concat(remaining > 0 ? [`${remaining} ${pluralUnit(product.unit || product.variant_type || 'Piece')}`] : []).join(' '), equivalents: parts.join(' / ') };
+  if (remaining > 0) parts.push(`${remaining} ${pluralUnit(baseUnit)}`);
+  return { base: total, text: largestParts.concat(remaining > 0 ? [`${remaining} ${pluralUnit(baseUnit)}`] : []).join(' '), equivalents: parts.join(' / ') };
 }
 
 function stockPackagingView(product = {}) {
   const breakdown = stockPackagingBreakdown(product);
-  const baseUnit = product.unit || product.variant_type || 'Piece';
+  const baseUnit = productBaseUnit(product);
   return `${breakdown.base} ${pluralUnit(baseUnit)} | ${breakdown.text}${breakdown.equivalents ? ` | ${breakdown.equivalents}` : ''}`;
 }
 
@@ -1544,6 +1566,7 @@ function CatalogModule({ rows, products, brand, refresh }) {
     if (exists) return notify('This item already exists in inventory');
     const product = await saveRecord('products', candidate);
     window.dispatchEvent(new CustomEvent('msm:product-saved', { detail: product }));
+    broadcastInventoryRefresh({ action: 'product-created-from-catalog', product_uuid: product.uuid });
     runInBackground(() => saveRemoteRecord('products', product), 'Inventory synced in background');
     await refresh();
     await auditProductHydration(product);
@@ -1686,6 +1709,7 @@ function Inventory({ rows, brand, refresh }) {
   async function saveProductDraft(draft, auditAction = draft?.uuid ? 'Product Edited' : 'Product Created') {
     const product = await saveRecord('products', calculatedProduct(draft));
     window.dispatchEvent(new CustomEvent('msm:product-saved', { detail: product }));
+    broadcastInventoryRefresh({ action: auditAction, product_uuid: product.uuid });
     runInBackground(() => saveRemoteRecord('products', product), 'Inventory synced in background');
     setEditing(null);
     setDuplicateWarning(null);
@@ -1729,6 +1753,7 @@ function Inventory({ rows, brand, refresh }) {
 
   async function remove(row, mode) {
     await deleteEverywhere('products', row, mode);
+    broadcastInventoryRefresh({ action: 'product-deleted', product_uuid: row.uuid, mode });
     setDeleting(null);
     await refresh();
     notify('Product deleted successfully');
@@ -1739,6 +1764,7 @@ function Inventory({ rows, brand, refresh }) {
     if (!file) return;
     await importCsvRecords('products', file);
     event.target.value = '';
+    broadcastInventoryRefresh({ action: 'inventory-import' });
     await refresh();
     notify('Inventory import completed successfully');
   }
@@ -1753,6 +1779,7 @@ function Inventory({ rows, brand, refresh }) {
       await receiveInventoryByScan({ ...receiving, product_uuid: receivingMatch?.product?.uuid }, { products: rows });
       setReceiving({ scan: '', quantity: 1, cost_price: '', batch_number: '', expiry_date: '' });
       setReceivingMatch(null);
+      broadcastInventoryRefresh({ action: 'stock-received', product_uuid: receivingMatch?.product?.uuid });
       await refresh();
       notify('Scanned stock received successfully');
     } catch (error) {
@@ -3150,6 +3177,7 @@ async function addMedicineToInventory(medicine) {
   };
   const saved = await saveRecord('products', product);
   window.dispatchEvent(new CustomEvent('msm:product-saved', { detail: saved }));
+  broadcastInventoryRefresh({ action: 'medicine-added-to-inventory', product_uuid: saved.uuid });
   await auditProductHydration(saved);
   notify('Medicine added to inventory');
 }
