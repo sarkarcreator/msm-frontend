@@ -1196,53 +1196,95 @@ function topByMoney(rows, key) {
   return groupDashboardRows(rows, key)[0]?.name || 'No Data Available';
 }
 
+function salesTodayTotal(sales = []) {
+  return sales.filter((sale) => sameDayLocal(sale.sold_at || sale.created_at)).reduce((sum, sale) => sum + Number(sale.total || 0), 0);
+}
+
+function topSellingProducts(data = {}) {
+  const products = data.products || [];
+  const namesByUuid = Object.fromEntries(products.map((product) => [product.uuid, productDisplayName(product)]));
+  return Object.values((data.sale_items || []).reduce((acc, item) => {
+    const name = item.product_name || namesByUuid[item.product_uuid] || item.name || 'Unknown Product';
+    acc[name] ??= { uuid: name, product_name: name, quantity: 0, total: 0 };
+    acc[name].quantity += Number(item.quantity || 0);
+    acc[name].total += Number(item.total || (Number(item.quantity || 0) * Number(item.price || 0)));
+    return acc;
+  }, {})).sort((a, b) => b.quantity - a.quantity || b.total - a.total);
+}
+
+function expiredProducts(products = []) {
+  const now = Date.now();
+  return products.filter((product) => {
+    if (!product.expiry_date) return false;
+    const expiry = new Date(product.expiry_date).getTime();
+    return Number.isFinite(expiry) && expiry < now;
+  });
+}
+
+function MetricGrid({ cards }) {
+  return <div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? (value || 'No Data Available') : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div>;
+}
+
+function RetailSalesPanel({ sales }) {
+  const max = Math.max(...sales.slice(0, 8).map((sale) => Number(sale.total)), 1);
+  return <section className="panel"><div className="module-head"><h2>Sales Performance</h2><span className="shortcut-pill"><BarChart3 size={15} /> Last {Math.min(sales.length, 8)} invoices</span></div>{sales.length ? <SalesChart sales={sales} max={max} /> : <DashboardEmpty icon={BarChart3} title="No Sales Data Available" description="Start creating sales to see analytics." />}</section>;
+}
+
 function Dashboard({ snapshot, data, brand, auth, refresh }) {
   if (auth?.role === 'Super Admin') return <SuperAdminDashboard data={data} refresh={refresh} />;
   if (brand?.business_type === 'Hospital') return <HospitalDashboard data={data} auth={auth} brand={brand} refresh={refresh} />;
-  const businessType = brand?.business_type || 'General Store';
-  if (businessTypeKey(businessType) === 'traders') return <TradersDashboard data={data} snapshot={snapshot} />;
-  const supportsRepairs = REPAIR_SHOP_TYPES.has(businessType);
-  const retailCards = [
-    ['Today Orders', snapshot?.todayOrders, false],
-    ['Today Sales', snapshot?.todaySales],
-    ['Monthly Profit', snapshot?.monthlyProfit],
-    ['Best Selling Product', snapshot?.bestSellingProduct, 'text'],
-    ['Credit Receivable', snapshot?.creditReceivable],
-    ['Supplier Payables', snapshot?.supplierPayables],
-    ['Cash In Hand', snapshot?.cashInHand],
-    ['Inventory Value', snapshot?.inventoryValue],
-    ['Inventory Qty', snapshot?.inventoryQuantity, false],
-  ];
-  const repairCards = supportsRepairs ? [['Today Repairs', snapshot?.todayRepairs, false], ['Repair Revenue', snapshot?.repairRevenue], ['Pending Repairs', snapshot?.pendingRepairs, false]] : [];
-  const pharmacyCards = businessType === 'Pharmacy' ? [['Medicine Items', (data.medicines || []).length, false], ['Low Stock Medicines', (snapshot?.lowStock || []).length, false], ['Near Expiry Items', nearExpiryProducts(data.products || []).length, false]] : [];
-  const cards = [...retailCards.slice(0, 4), ...pharmacyCards, ...repairCards, ...retailCards.slice(4)];
+  const key = businessTypeKey(brand?.business_type || 'General Store');
+  if (key === 'traders') return <TradersDashboard data={data} snapshot={snapshot} />;
   const sales = data.sales || [];
-  const customers = data.customers || [];
   const products = data.products || [];
   const wallets = data.mobile_wallet_transactions || [];
   const showWalletDashboard = (ROLE_MODULES[auth?.role] || ROLE_MODULES.Cashier).includes('mobileWallets');
-  const pendingRepairs = [...(data.repairs || []), ...(data.manual_repair_receipts || [])].filter((row) => !['Delivered', 'Completed'].includes(row.status));
-  const max = Math.max(...sales.slice(0, 8).map((sale) => Number(sale.total)), 1);
-  return <div className="stack"><div className="metric-grid">{cards.map(([label, value, moneyValue = true]) => <div className="metric animated" key={label}><span>{label}</span><strong>{moneyValue === 'text' ? (value || 'No Data Available') : moneyValue ? money(value || 0) : Number(value || 0)}</strong></div>)}</div>{showWalletDashboard && <WalletDashboard wallets={wallets} />}<section className="panel"><div className="module-head"><h2>Sales Performance</h2><span className="shortcut-pill"><BarChart3 size={15} /> Last {Math.min(sales.length, 8)} invoices</span></div>{sales.length ? <SalesChart sales={sales} max={max} /> : <DashboardEmpty icon={BarChart3} title="No Sales Data Available" description="Start creating sales to see analytics." />}</section><section className="split"><DashboardTable title="Top Customers" rows={snapshot?.topCustomers || []} cols={['name', 'phone', 'total_spent', 'balance']} emptyIcon={Users} emptyTitle={customers.length ? 'No Spending History Available' : 'No Customer Data Available'} emptyDescription={customers.length ? 'Customer spend totals will appear after sales are recorded.' : 'Create customers or complete sales to build this leaderboard.'} /><DashboardTable title="Low Stock Alerts" rows={snapshot?.lowStock || []} cols={['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={products.length ? 'All Stock Levels Healthy' : 'No Inventory Data Available'} emptyDescription={products.length ? 'Products below their low stock threshold will appear here.' : 'Add inventory or receive stock from Purchases to enable alerts.'} /></section><section className="split"><DashboardTable title="Recent Sales" rows={snapshot?.recentSales || []} cols={['invoice_number', 'customer_name', 'total', 'paid', 'balance']} emptyIcon={ReceiptText} emptyTitle="No Recent Sales Available" emptyDescription="Completed invoices will appear here automatically." />{supportsRepairs ? <DashboardTable title="Pending Repairs" rows={pendingRepairs} cols={['job_number', 'receipt_number', 'customer_name', 'device_name', 'status']} emptyIcon={Wrench} emptyTitle="No Pending Repairs" emptyDescription="Open repair jobs and manual repair receipts will appear here." /> : <DashboardTable title={businessType === 'Pharmacy' ? 'Near Expiry Medicines' : 'Inventory Watch'} rows={businessType === 'Pharmacy' ? nearExpiryProducts(products) : snapshot?.lowStock || []} cols={businessType === 'Pharmacy' ? ['product_name', 'batch_number', 'expiry_date', 'quantity'] : ['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={businessType === 'Pharmacy' ? 'No Near Expiry Medicines' : 'Inventory Looks Good'} emptyDescription={businessType === 'Pharmacy' ? 'Medicines close to expiry will appear here.' : 'Stock issues will appear here automatically.'} />}</section></div>;
+  const lowStock = snapshot?.lowStock || [];
+  const topProducts = topSellingProducts(data);
+
+  if (key === 'mobile_shop') {
+    const imeiStock = (data.imei_registry || []).filter((row) => !row.status || ['Available', 'In Stock'].includes(row.status)).length || products.reduce((sum, product) => sum + (imeiListText(product) ? imeiListText(product).split(',').length : 0), 0);
+    const cards = [
+      ['IMEI Stock', imeiStock, false],
+      ['Warranty Claims', (data.warranty_claims || []).length, false],
+      ['Sales Today', salesTodayTotal(sales), true],
+    ];
+    return <div className="stack"><MetricGrid cards={cards} />{showWalletDashboard && <WalletDashboard wallets={wallets} />}<RetailSalesPanel sales={sales} /><section className="split"><DashboardTable title="IMEI Stock" rows={(data.imei_registry || []).slice(0, 10)} cols={['product_name', 'imei_1', 'imei_2', 'serial_number', 'status']} emptyIcon={Smartphone} emptyTitle="No IMEI Stock" emptyDescription="Mobile IMEI stock will appear after purchases or inventory entry." /><DashboardTable title="Warranty Claims" rows={(data.warranty_claims || []).slice(0, 10)} cols={['claim_number', 'customer_name', 'product_name', 'imei_1', 'status']} emptyIcon={KeyRound} emptyTitle="No Warranty Claims" emptyDescription="Warranty claims will appear here." /></section></div>;
+  }
+
+  if (key === 'pharmacy') {
+    const nearExpiry = nearExpiryProducts(products);
+    const expired = expiredProducts(products);
+    const cards = [
+      ['Near Expiry', nearExpiry.length, false],
+      ['Expired Medicines', expired.length, false],
+      ['Sales Today', salesTodayTotal(sales), true],
+    ];
+    return <div className="stack"><MetricGrid cards={cards} />{showWalletDashboard && <WalletDashboard wallets={wallets} />}<RetailSalesPanel sales={sales} /><section className="split"><DashboardTable title="Near Expiry Medicines" rows={nearExpiry} cols={['product_name', 'generic_name', 'batch_number', 'expiry_date', 'quantity']} emptyIcon={Boxes} emptyTitle="No Near Expiry Medicines" emptyDescription="Medicines close to expiry will appear here." /><DashboardTable title="Expired Medicines" rows={expired} cols={['product_name', 'generic_name', 'batch_number', 'expiry_date', 'quantity']} emptyIcon={Bell} emptyTitle="No Expired Medicines" emptyDescription="Expired medicines will appear here automatically." /></section></div>;
+  }
+
+  const cards = [
+    ['Total Products', products.length, false],
+    ['Low Stock', lowStock.length, false],
+    ['Sales Today', salesTodayTotal(sales), true],
+    ['Top Selling Products', topProducts[0]?.product_name || 'No Data Available', 'text'],
+  ];
+  return <div className="stack"><MetricGrid cards={cards} />{showWalletDashboard && <WalletDashboard wallets={wallets} />}<RetailSalesPanel sales={sales} /><section className="split"><DashboardTable title="Top Selling Products" rows={topProducts.slice(0, 10)} cols={['product_name', 'quantity', 'total']} emptyIcon={Boxes} emptyTitle="No Product Sales Available" emptyDescription="Top selling products will appear after sales are recorded." /><DashboardTable title="Low Stock" rows={lowStock} cols={['product_name', 'quantity', 'low_stock_threshold']} emptyIcon={Boxes} emptyTitle={products.length ? 'All Stock Levels Healthy' : 'No Inventory Data Available'} emptyDescription={products.length ? 'Products below their low stock threshold will appear here.' : 'Add inventory or receive stock to enable alerts.'} /></section></div>;
 }
 
 function TradersDashboard({ data }) {
   const sales = data.sales || [];
   const recoveries = data.trader_recoveries || [];
   const retailers = data.trader_retailers || [];
-  const saleItems = data.sale_items || [];
-  const todaySales = sales.filter((sale) => sameDayLocal(sale.sold_at)).reduce((sum, sale) => sum + Number(sale.total || 0), 0);
-  const todayRecovery = recoveries.filter((row) => sameDayLocal(row.date || row.recovered_at || row.created_at)).reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const routeSales = sales.filter((sale) => sale.route_uuid || sale.route_name).reduce((sum, sale) => sum + Number(sale.total || 0), 0);
+  const recoveryTotal = recoveries.reduce((sum, row) => sum + Number(row.amount || 0), 0);
   const cards = [
-    ['Today Sales', todaySales],
-    ['Today Recovery', todayRecovery],
-    ['Outstanding Receivables', retailers.reduce((sum, row) => sum + Number(row.balance || 0), 0)],
-    ['Top Salesman', topByMoney(sales, 'salesman_name')],
-    ['Top Route', topByMoney(sales, 'route_name')],
-    ['Top Brand', topByMoney(saleItems, 'brand')],
-    ['Monthly Profit', sales.filter((sale) => String(sale.sold_at || '').startsWith(new Date().toISOString().slice(0, 7))).reduce((sum, sale) => sum + Number(sale.profit || 0), 0)],
+    ['Retailers', retailers.length, false],
+    ['Recoveries', recoveryTotal, true],
+    ['Route Sales', routeSales, true],
+    ['Outstanding Balances', retailers.reduce((sum, row) => sum + Number(row.balance || 0), 0), true],
   ];
-  return <div className="stack"><div className="metric-grid">{cards.map(([label, value]) => <div className="metric animated" key={label}><span>{label}</span><strong>{typeof value === 'number' ? money(value) : value}</strong></div>)}</div><section className="split"><DashboardTable title="Route Performance" rows={groupDashboardRows(sales, 'route_name')} cols={['name', 'total', 'count']} emptyIcon={FileText} emptyTitle="No Route Sales" emptyDescription="Route sales will appear after van sales are recorded." /><DashboardTable title="Recovery History" rows={recoveries.slice(0, 10)} cols={['retailer_name', 'salesman_name', 'amount', 'payment_method', 'date']} emptyIcon={WalletCards} emptyTitle="No Recovery Data" emptyDescription="Recoveries collected from retailers will appear here." /></section></div>;
+  return <div className="stack"><MetricGrid cards={cards} /><section className="split"><DashboardTable title="Route Performance" rows={groupDashboardRows(sales, 'route_name')} cols={['name', 'total', 'count']} emptyIcon={FileText} emptyTitle="No Route Sales" emptyDescription="Route sales will appear after van sales are recorded." /><DashboardTable title="Recovery History" rows={recoveries.slice(0, 10)} cols={['retailer_name', 'salesman_name', 'amount', 'payment_method', 'date']} emptyIcon={WalletCards} emptyTitle="No Recovery Data" emptyDescription="Recoveries collected from retailers will appear here." /></section></div>;
 }
 
 function nearExpiryProducts(products) {
@@ -1294,6 +1336,8 @@ function HospitalDashboard({ data, auth, brand, refresh }) {
   const pendingBills = (data.hospital_bills || []).filter((bill) => Number(bill.balance || 0) > 0);
   const paidBillsToday = (data.hospital_bills || []).filter((bill) => bill.status === 'Paid' && String(bill.received_at || bill.updated_at || '').startsWith(today));
   const revenueToday = paidBillsToday.reduce((sum, bill) => sum + Number(bill.paid_amount || bill.paid || 0), 0);
+  const admissions = patients.filter((patient) => patient.status === 'Admitted' || patient.visit_type === 'Admission');
+  const appointments = patients.filter((patient) => String(patient.visit_type || '').toLowerCase().includes('appointment') || String(patient.visit_date || patient.created_at || '').startsWith(today));
   const pendingLab = (data.lab_reports || []).filter((row) => row.status === 'Pending');
   const pendingRadiology = (data.radiology_reports || []).filter((row) => row.status === 'Pending');
   const pendingReports = [...pendingLab, ...pendingRadiology];
@@ -1310,20 +1354,10 @@ function HospitalDashboard({ data, auth, brand, refresh }) {
     .slice(0, 8)
     .map((patient) => ({ uuid: patient.uuid, patient_name: patient.patient_name, medicine: patient.medicine, medicine_days: patient.medicine_days, next_visit: patient.next_visit, diagnosis: patient.diagnosis, visit_date: patient.visit_date }));
   const cards = [
-    ['Doctor', doctor || 'No Doctor', 'text'],
-    ['Patients Today', todayPatients.length, false],
-    ['Total Patients', patients.length, false],
-    ['Waiting Tokens', waitingPatients.length, false],
-    ['Under Treatment', underTreatment.length, false],
-    ['Completed', completedPatients.length, false],
-    ["Today's Paid Patients", paidBillsToday.length, false],
-    ["Today's Revenue", revenueToday, true],
-    ['Follow Ups', followUps.length, false],
-    ['Today Fees', feesToday, true],
-    ['Pending Bills', pendingBills.length, false],
-    ['Pending Reports', pendingReports.length, false],
-    ['Reviewed Reports', reviewedReports.length, false],
-    ['Active Assistants', assistants.filter((item) => item.status !== 'Disabled').length, false],
+    ['Patients', patients.length, false],
+    ['Admissions', admissions.length, false],
+    ['Appointments', appointments.length, false],
+    ['Revenue', revenueToday || feesToday, true],
   ];
   const newPatient = () => RESOURCES.patients.defaultRecord({ auth, brand });
   const canCreatePatient = !['Receptionist', 'Billing Officer'].includes(auth?.role || '');
