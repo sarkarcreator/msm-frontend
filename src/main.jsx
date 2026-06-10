@@ -611,6 +611,10 @@ function App() {
         headers: { Accept: 'application/json', Authorization: `Bearer ${auth.token}` },
       });
       const payload = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        handleLogout();
+        return;
+      }
       if (response.ok && payload.settings) {
         await saveBrandSettings(payload.settings);
         const sessionUser = payload.user || {};
@@ -776,6 +780,11 @@ function App() {
   );
 }
 
+function apiErrorMessage(payload = {}, fallback = 'Request failed.') {
+  const validation = Object.values(payload.errors || {}).flat().filter(Boolean).join(' ');
+  return validation || payload.message || fallback;
+}
+
 function LoginScreen({ brand, onLogin }) {
   const [mode, setMode] = useState('admin');
   const [form, setForm] = useState({ email: '', password: '' });
@@ -794,7 +803,7 @@ function LoginScreen({ brand, onLogin }) {
         body: JSON.stringify({ ...form, portal: mode === 'user' ? 'user' : 'admin' }),
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.message || 'Login failed. Check email and password.');
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'Login failed. Check email and password.'));
       onLogin(payload);
     } catch (err) {
       setError(err.message || 'Login failed. Please try again.');

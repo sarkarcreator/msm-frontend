@@ -1639,6 +1639,7 @@ export async function syncNow() {
       }),
     });
     const payload = await response.json().catch(() => ({}));
+    if (response.status === 401) return handleUnauthorizedSession();
     if (!response.ok) throw new Error(payload.message || 'Sync failed');
     const results = payload.results || [];
     const accepted = new Set(results.filter((item) => item.status === 'accepted').map((item) => item.uuid));
@@ -1674,6 +1675,7 @@ export async function pullRemoteChanges() {
       headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
     });
     const payload = await response.json().catch(() => ({}));
+    if (response.status === 401) return handleUnauthorizedSession();
     if (!response.ok) throw new Error(payload.message || 'Sync pull failed');
     const operations = payload.operations || [];
     for (const operation of operations) {
@@ -1696,6 +1698,16 @@ export async function pullRemoteChanges() {
   } catch (error) {
     return { error: error.message };
   }
+}
+
+function handleUnauthorizedSession() {
+  localStorage.removeItem('dsh_token');
+  localStorage.removeItem('dsh_user_name');
+  localStorage.removeItem('dsh_user_role');
+  localStorage.removeItem('dsh_license_uuid');
+  localStorage.removeItem('dsh_business_type');
+  window.dispatchEvent(new CustomEvent('dsh:toast', { detail: 'Session expired. Please login again.' }));
+  return { unauthorized: true };
 }
 
 export async function hydrateRemoteStores(stores = []) {
