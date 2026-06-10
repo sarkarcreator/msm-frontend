@@ -132,6 +132,93 @@ function businessTypeKey(type) {
   return 'generic_shop';
 }
 
+const BUSINESS_TYPE_RULES = {
+  mobile_shop: {
+    showImei: true,
+    showWarranty: true,
+    showBatch: false,
+    showExpiry: false,
+    showMedicine: false,
+    showPackaging: false,
+    showTrader: false,
+    inventoryColumns: ['product_name', 'category', 'brand', 'model', 'imei_numbers', 'serial_number', 'warranty', 'quantity', 'purchase_price', 'sale_price', 'status'],
+    inventorySearch: ['product_name', 'brand', 'model', 'barcode', 'secondary_barcode', 'qr_code', 'sku', 'product_code', 'imei', 'imei_numbers', 'serial_number'],
+    posSearch: ['product_name', 'brand', 'model', 'barcode', 'secondary_barcode', 'qr_code', 'sku', 'product_code', 'imei', 'imei_numbers', 'serial_number'],
+    posCartColumns: ['product_name', 'imei_numbers', 'selected_unit', 'unit_conversion', 'available_stock', 'price', 'quantity', 'line_total'],
+    detailFields: ['barcode', 'secondary_barcode', 'qr_code', 'product_code', 'sku', 'model', 'imei_numbers', 'serial_number', 'warranty', 'supplier_name'],
+  },
+  pharmacy: {
+    showImei: false,
+    showWarranty: false,
+    showBatch: true,
+    showExpiry: true,
+    showMedicine: true,
+    showPackaging: true,
+    showTrader: false,
+    inventoryColumns: ['product_name', 'generic_name', 'category', 'brand', 'batch_number', 'expiry_date', 'manufacturer', 'strength', 'dosage_form', 'quantity', 'purchase_price', 'sale_price', 'status'],
+    inventorySearch: ['product_name', 'generic_name', 'composition', 'brand', 'barcode', 'secondary_barcode', 'qr_code', 'sku', 'product_code', 'batch_number', 'manufacturer'],
+    posSearch: ['product_name', 'generic_name', 'composition', 'brand', 'barcode', 'secondary_barcode', 'qr_code', 'sku', 'product_code', 'batch_number', 'manufacturer'],
+    posCartColumns: ['product_name', 'batch_number', 'expiry_date', 'selected_unit', 'unit_conversion', 'available_stock', 'price', 'quantity', 'line_total'],
+    detailFields: ['barcode', 'secondary_barcode', 'qr_code', 'product_code', 'sku', 'generic_name', 'composition', 'strength', 'dosage_form', 'batch_number', 'expiry_date', 'manufacturer', 'supplier_name'],
+  },
+  general_store: {
+    showImei: false,
+    showWarranty: false,
+    showBatch: false,
+    showExpiry: false,
+    showMedicine: false,
+    showPackaging: true,
+    showTrader: false,
+    inventoryColumns: ['product_name', 'category', 'brand', 'barcode', 'pack_size', 'unit', 'package_quantity', 'units_per_package', 'quantity', 'packaging_view', 'purchase_price', 'sale_price', 'low_stock_threshold', 'status'],
+    inventorySearch: ['product_name', 'brand', 'category', 'barcode', 'secondary_barcode', 'qr_code', 'box_barcode', 'carton_barcode', 'sku', 'product_code', 'pack_size', 'unit'],
+    posSearch: ['product_name', 'brand', 'category', 'barcode', 'secondary_barcode', 'qr_code', 'box_barcode', 'carton_barcode', 'sku', 'product_code', 'pack_size', 'unit'],
+    posCartColumns: ['product_name', 'selected_unit', 'unit_conversion', 'available_stock', 'price', 'quantity', 'line_total'],
+    detailFields: ['barcode', 'secondary_barcode', 'qr_code', 'product_code', 'box_barcode', 'carton_barcode', 'sku', 'variant_type', 'pack_size', 'supplier_name'],
+  },
+  traders: {
+    showImei: false,
+    showWarranty: false,
+    showBatch: false,
+    showExpiry: false,
+    showMedicine: false,
+    showPackaging: true,
+    showTrader: true,
+    inventoryColumns: ['product_name', 'category', 'brand', 'barcode', 'pack_size', 'unit', 'package_quantity', 'units_per_package', 'quantity', 'packaging_view', 'purchase_price', 'sale_price', 'status'],
+    inventorySearch: ['product_name', 'brand', 'category', 'barcode', 'secondary_barcode', 'qr_code', 'box_barcode', 'carton_barcode', 'sku', 'product_code', 'pack_size', 'unit'],
+    posSearch: ['product_name', 'brand', 'category', 'barcode', 'secondary_barcode', 'qr_code', 'box_barcode', 'carton_barcode', 'sku', 'product_code', 'pack_size', 'unit'],
+    posCartColumns: ['product_name', 'selected_unit', 'unit_conversion', 'available_stock', 'price', 'quantity', 'line_total'],
+    detailFields: ['barcode', 'secondary_barcode', 'qr_code', 'product_code', 'box_barcode', 'carton_barcode', 'sku', 'variant_type', 'pack_size', 'supplier_name'],
+  },
+  hospital: {
+    showImei: false,
+    showWarranty: false,
+    showBatch: true,
+    showExpiry: true,
+    showMedicine: true,
+    showPackaging: false,
+    showTrader: false,
+    inventoryColumns: ['product_name', 'generic_name', 'category', 'batch_number', 'expiry_date', 'manufacturer', 'strength', 'dosage_form', 'quantity', 'purchase_price', 'sale_price', 'status'],
+    inventorySearch: ['product_name', 'generic_name', 'composition', 'barcode', 'secondary_barcode', 'qr_code', 'sku', 'product_code', 'batch_number', 'manufacturer'],
+    posSearch: ['product_name', 'generic_name', 'composition', 'barcode', 'secondary_barcode', 'qr_code', 'sku', 'product_code', 'batch_number', 'manufacturer'],
+    posCartColumns: ['product_name', 'batch_number', 'expiry_date', 'selected_unit', 'unit_conversion', 'available_stock', 'price', 'quantity', 'line_total'],
+    detailFields: ['barcode', 'secondary_barcode', 'qr_code', 'product_code', 'sku', 'generic_name', 'composition', 'strength', 'dosage_form', 'batch_number', 'expiry_date', 'manufacturer', 'supplier_name'],
+  },
+};
+
+function businessTypeRules(brandOrType) {
+  const key = typeof brandOrType === 'string' ? businessTypeKey(brandOrType) : businessTypeKey(brandOrType?.business_type || localStorage.getItem('dsh_business_type'));
+  return BUSINESS_TYPE_RULES[key] || BUSINESS_TYPE_RULES.general_store;
+}
+
+function invoiceMetaParts(item, brand = {}) {
+  const rules = businessTypeRules(brand);
+  const parts = [];
+  if (rules.showImei && imeiListText(item)) parts.push(['IMEI / Serial', imeiListText(item)]);
+  if (rules.showBatch && item.batch_number) parts.push(['Batch', item.batch_number]);
+  if (rules.showExpiry && item.expiry_date) parts.push(['Expiry', item.expiry_date]);
+  return parts;
+}
+
 function categoriesForBusiness(brand) {
   const type = brand?.business_type || 'General Store';
   const groups = {
@@ -1532,9 +1619,10 @@ function Inventory({ rows, brand, refresh }) {
   const [receiving, setReceiving] = useState({ scan: '', quantity: 1, cost_price: '', batch_number: '', expiry_date: '' });
   const [receivingMatch, setReceivingMatch] = useState(null);
   const importRef = useRef(null);
-  const columns = RESOURCES.products.columns;
+  const rules = businessTypeRules(brand);
+  const columns = rules.inventoryColumns;
   const categoryOptions = categoriesForBusiness(brand);
-  const filtered = useMemo(() => filterRows(inventoryRows(rows), query, RESOURCES.products.search), [rows, query]);
+  const filtered = useMemo(() => filterRows(inventoryRows(rows), query, rules.inventorySearch), [rows, query, rules]);
   const blank = {
     category: categoryOptions[0],
     unit: 'Single Unit',
@@ -1639,7 +1727,7 @@ function Inventory({ rows, brand, refresh }) {
   }
 
   const edit = calculatedProduct(editing || blank);
-  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><form className="inline-form" onSubmit={receiveScan}><UniversalProductLookup autoFocus value={receiving.scan} data={{ products: rows }} onChange={(value) => { setReceiving({ ...receiving, scan: value }); setReceivingMatch(null); }} onPick={(match) => { setReceivingMatch(match); setReceiving({ ...receiving, scan: match.product?.barcode || match.product?.sku || productDisplayName(match.product) || receiving.scan, cost_price: receiving.cost_price || match.product?.purchase_price || '' }); }} /><input type="number" min="1" value={receiving.quantity} onChange={(event) => setReceiving({ ...receiving, quantity: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Cost" value={receiving.cost_price} onChange={(event) => setReceiving({ ...receiving, cost_price: event.target.value })} /><input placeholder="Batch" value={receiving.batch_number} onChange={(event) => setReceiving({ ...receiving, batch_number: event.target.value })} /><input type="date" value={receiving.expiry_date} onChange={(event) => setReceiving({ ...receiving, expiry_date: event.target.value })} /><button className="ghost-btn" disabled={!receiving.scan}><Plus size={15} /> Receive Scan</button></form>{receivingMatch?.product && <div className="lookup-selected"><strong>{productDisplayName(receivingMatch.product)}</strong><span>{receivingMatch.product.brand || 'No brand'} - {receivingMatch.product.category || 'No category'} - {receivingMatch.product.unit || 'Unit'} - Stock {receivingMatch.product.quantity || 0} - {money(receivingMatch.product.sale_price || 0)}</span></div>}<input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(calculatedProduct(row))}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Product Detail" row={viewing} columns={[...columns, 'barcode', 'secondary_barcode', 'qr_code', 'product_code', 'box_barcode', 'carton_barcode', 'sku', 'variant_type', 'pack_size', 'batch_number', 'expiry_date', 'imei_numbers', 'manufacturer', 'warranty', 'supplier_name']} onClose={() => setViewing(null)} />}{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={edit.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={edit.category || categoryOptions[0]} onChange={(event) => change('category', event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={edit.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label><label>SKU<input value={edit.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Product Code<input value={edit.product_code || ''} onChange={(event) => change('product_code', event.target.value)} /></label><label>Barcode<input value={edit.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Secondary Barcode<input value={edit.secondary_barcode || ''} onChange={(event) => change('secondary_barcode', event.target.value)} /></label><label>QR Code<input value={edit.qr_code || ''} onChange={(event) => change('qr_code', event.target.value)} /></label><label>Box Barcode<input value={edit.box_barcode || ''} onChange={(event) => change('box_barcode', event.target.value)} /></label><label>Carton Barcode<input value={edit.carton_barcode || ''} onChange={(event) => change('carton_barcode', event.target.value)} /></label><label>Unit<select value={edit.unit || 'Single Unit'} onChange={(event) => change('unit', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Variant Type<select value={edit.variant_type || edit.unit || 'Single Unit'} onChange={(event) => change('variant_type', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label><label>Pack Size<input value={edit.pack_size || ''} onChange={(event) => change('pack_size', event.target.value)} /></label><label>Boxes / Packs Qty<input type="number" min="0" value={edit.package_quantity || 0} onChange={(event) => change('package_quantity', event.target.value)} /></label><label>Pcs Per Box / Pack<input type="number" min="1" value={edit.units_per_package || 1} onChange={(event) => change('units_per_package', event.target.value)} /></label><label>Loose Pcs<input type="number" min="0" value={edit.loose_quantity || 0} onChange={(event) => change('loose_quantity', event.target.value)} /></label><label>Total Stock Pcs<input type="number" readOnly value={edit.quantity || 0} /></label><label>Cost Per Pc<input type="number" min="0" step="0.01" value={edit.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label><label>Cost Per Box / Pack<input type="number" readOnly value={edit.package_cost_price || 0} /></label><label>Total Cost<input type="number" readOnly value={edit.total_cost || 0} /></label><label>Sale Price Per Pc<input type="number" min="0" step="0.01" value={edit.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Low Stock Warning<input type="number" min="0" value={edit.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label><label>Batch Number<input value={edit.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label><label>Expiry Date<input type="date" value={edit.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label><label>IMEI Numbers<textarea rows="3" value={imeiListText(edit)} onChange={(event) => { change('imei_numbers', event.target.value); change('imei', event.target.value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)[0] || ''); }} /></label><label>Manufacturer<input value={edit.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label><label>Warranty<input value={edit.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label><label>Supplier<input value={edit.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div><PackagingBuilder product={edit} onChange={change} /><div className="totals inventory-total"><span>Total Stock: <strong>{edit.quantity || 0} pcs</strong></span><span>Per Box Cost: <strong>{money(edit.package_cost_price)}</strong></span><span>Total Cost: <strong>{money(edit.total_cost)}</strong></span></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{duplicateWarning && <DuplicateProductDialog warning={duplicateWarning} onClose={() => setDuplicateWarning(null)} onKeepExisting={keepExistingDuplicate} onMerge={mergeDuplicateDraft} />}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
+  return <div className="stack"><section className="panel"><ModuleHeader title="Inventory Management" query={query} setQuery={setQuery} onAdd={() => setEditing(blank)} onImport={() => importRef.current?.click()} onExport={() => exportCsv('products.csv', filtered)} onPrint={() => printTable('Inventory Management', filtered, columns)} /><form className="inline-form" onSubmit={receiveScan}><UniversalProductLookup autoFocus value={receiving.scan} data={{ products: rows }} onChange={(value) => { setReceiving({ ...receiving, scan: value }); setReceivingMatch(null); }} onPick={(match) => { setReceivingMatch(match); setReceiving({ ...receiving, scan: match.product?.barcode || match.product?.sku || productDisplayName(match.product) || receiving.scan, cost_price: receiving.cost_price || match.product?.purchase_price || '' }); }} /><input type="number" min="1" value={receiving.quantity} onChange={(event) => setReceiving({ ...receiving, quantity: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Cost" value={receiving.cost_price} onChange={(event) => setReceiving({ ...receiving, cost_price: event.target.value })} />{rules.showBatch && <input placeholder="Batch" value={receiving.batch_number} onChange={(event) => setReceiving({ ...receiving, batch_number: event.target.value })} />}{rules.showExpiry && <input type="date" value={receiving.expiry_date} onChange={(event) => setReceiving({ ...receiving, expiry_date: event.target.value })} />}<button className="ghost-btn" disabled={!receiving.scan}><Plus size={15} /> Receive Scan</button></form>{receivingMatch?.product && <div className="lookup-selected"><strong>{productDisplayName(receivingMatch.product)}</strong><span>{receivingMatch.product.brand || 'No brand'} - {receivingMatch.product.category || 'No category'} - {receivingMatch.product.unit || 'Unit'} - Stock {receivingMatch.product.quantity || 0} - {money(receivingMatch.product.sale_price || 0)}</span></div>}<input ref={importRef} className="hidden-input" type="file" accept=".csv" onChange={importFile} /><DataTable rows={filtered} columns={columns} onAdd={() => setEditing(blank)} actions={(row) => <><button className="ghost-btn" onClick={() => setViewing(row)}>View</button><button className="ghost-btn" onClick={() => setEditing(calculatedProduct(row))}><Edit3 size={15} /> Edit</button><button className="ghost-btn" onClick={() => printBarcode(row)}><Printer size={15} /> Barcode</button><button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button></>} /></section>{viewing && <DetailModal title="Product Detail" row={viewing} columns={[...new Set([...columns, ...rules.detailFields])]} onClose={() => setViewing(null)} />}{editing && <ModalShell onClose={() => setEditing(null)}><form onSubmit={submit}><div className="modal-header"><h2>{editing.uuid ? 'Edit Product' : 'Add Product'}</h2><button type="button" className="icon-btn" onClick={() => setEditing(null)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Product Name<input required value={edit.product_name || ''} onChange={(event) => change('product_name', event.target.value)} /></label><label>Category<select value={edit.category || categoryOptions[0]} onChange={(event) => change('category', event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Brand<input value={edit.brand || ''} onChange={(event) => change('brand', event.target.value)} /></label>{rules.showMedicine && <label>Generic Name<input value={edit.generic_name || ''} onChange={(event) => change('generic_name', event.target.value)} /></label>}<label>SKU<input value={edit.sku || ''} onChange={(event) => change('sku', event.target.value)} /></label><label>Product Code<input value={edit.product_code || ''} onChange={(event) => change('product_code', event.target.value)} /></label><label>Barcode<input value={edit.barcode || ''} onChange={(event) => change('barcode', event.target.value)} /></label><label>Secondary Barcode<input value={edit.secondary_barcode || ''} onChange={(event) => change('secondary_barcode', event.target.value)} /></label><label>QR Code<input value={edit.qr_code || ''} onChange={(event) => change('qr_code', event.target.value)} /></label>{rules.showPackaging && <label>Box Barcode<input value={edit.box_barcode || ''} onChange={(event) => change('box_barcode', event.target.value)} /></label>}{rules.showPackaging && <label>Carton Barcode<input value={edit.carton_barcode || ''} onChange={(event) => change('carton_barcode', event.target.value)} /></label>}<label>Unit<select value={edit.unit || 'Single Unit'} onChange={(event) => change('unit', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label>{rules.showPackaging && <label>Variant Type<select value={edit.variant_type || edit.unit || 'Single Unit'} onChange={(event) => change('variant_type', event.target.value)}>{RETAIL_UNITS.map((item) => <option key={item}>{item}</option>)}</select></label>}{rules.showPackaging && <label>Pack Size<input value={edit.pack_size || ''} onChange={(event) => change('pack_size', event.target.value)} /></label>}{rules.showPackaging && <label>Boxes / Packs Qty<input type="number" min="0" value={edit.package_quantity || 0} onChange={(event) => change('package_quantity', event.target.value)} /></label>}{rules.showPackaging && <label>Pcs Per Box / Pack<input type="number" min="1" value={edit.units_per_package || 1} onChange={(event) => change('units_per_package', event.target.value)} /></label>}{rules.showPackaging && <label>Loose Pcs<input type="number" min="0" value={edit.loose_quantity || 0} onChange={(event) => change('loose_quantity', event.target.value)} /></label>}<label>Total Stock<input type="number" readOnly value={edit.quantity || 0} /></label><label>Cost Price<input type="number" min="0" step="0.01" value={edit.purchase_price || 0} onChange={(event) => change('purchase_price', event.target.value)} /></label>{rules.showPackaging && <label>Cost Per Box / Pack<input type="number" readOnly value={edit.package_cost_price || 0} /></label>}{rules.showPackaging && <label>Total Cost<input type="number" readOnly value={edit.total_cost || 0} /></label>}<label>Sale Price<input type="number" min="0" step="0.01" value={edit.sale_price || 0} onChange={(event) => change('sale_price', event.target.value)} /></label><label>Low Stock Warning<input type="number" min="0" value={edit.low_stock_threshold || 3} onChange={(event) => change('low_stock_threshold', event.target.value)} /></label>{rules.showMedicine && <label>Strength<input value={edit.strength || ''} onChange={(event) => change('strength', event.target.value)} /></label>}{rules.showMedicine && <label>Dosage Form<input value={edit.dosage_form || ''} onChange={(event) => change('dosage_form', event.target.value)} /></label>}{rules.showBatch && <label>Batch Number<input value={edit.batch_number || ''} onChange={(event) => change('batch_number', event.target.value)} /></label>}{rules.showExpiry && <label>Expiry Date<input type="date" value={edit.expiry_date || ''} onChange={(event) => change('expiry_date', event.target.value)} /></label>}{rules.showImei && <label>Model<input value={edit.model || ''} onChange={(event) => change('model', event.target.value)} /></label>}{rules.showImei && <label>Serial Number<input value={edit.serial_number || ''} onChange={(event) => change('serial_number', event.target.value)} /></label>}{rules.showImei && <label>IMEI Numbers<textarea rows="3" value={imeiListText(edit)} onChange={(event) => { change('imei_numbers', event.target.value); change('imei', event.target.value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)[0] || ''); }} /></label>}{rules.showMedicine && <label>Manufacturer<input value={edit.manufacturer || ''} onChange={(event) => change('manufacturer', event.target.value)} /></label>}{rules.showWarranty && <label>Warranty<input value={edit.warranty || ''} onChange={(event) => change('warranty', event.target.value)} /></label>}<label>Supplier<input value={edit.supplier_name || ''} onChange={(event) => change('supplier_name', event.target.value)} /></label></div>{rules.showPackaging && <PackagingBuilder product={edit} onChange={change} />}<div className="totals inventory-total"><span>Total Stock: <strong>{edit.quantity || 0}</strong></span>{rules.showPackaging && <span>Per Box Cost: <strong>{money(edit.package_cost_price)}</strong></span>}<span>Total Cost: <strong>{money(edit.total_cost)}</strong></span></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setEditing(null)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}{duplicateWarning && <DuplicateProductDialog warning={duplicateWarning} onClose={() => setDuplicateWarning(null)} onKeepExisting={keepExistingDuplicate} onMerge={mergeDuplicateDraft} />}{deleting && <DeleteDialog row={deleting} store="products" onClose={() => setDeleting(null)} onDelete={(mode) => remove(deleting, mode)} />}</div>;
 }
 
 function calculatedProduct(record) {
@@ -1923,7 +2011,8 @@ function POS2({ data, brand, refresh }) {
   const [customerOpen, setCustomerOpen] = useState(false);
   const [receiptFormat, setReceiptFormat] = useState(brand?.receipt_format || '80mm');
   const isTraders = businessTypeKey(brand?.business_type) === 'traders';
-  const products = filterRows(data.products || [], query, ['product_name', 'barcode', 'secondary_barcode', 'qr_code', 'box_barcode', 'carton_barcode', 'sku', 'imei', 'imei_numbers', 'brand', 'model', 'batch_number']);
+  const rules = businessTypeRules(brand);
+  const products = filterRows(data.products || [], query, rules.posSearch);
   const customerOptions = isTraders ? (data.trader_retailers || []).map((item) => ({ ...item, name: item.shop_name || item.owner_name })) : (data.customers || []);
   const customer = customerOptions.find((item) => item.uuid === payment.customer_uuid);
   const subtotal = cart.reduce((sum, item) => sum + Number(item.quantity) * Number(item.price), 0);
@@ -1946,6 +2035,8 @@ function POS2({ data, brand, refresh }) {
         product_uuid: product.uuid,
         product_name: productDisplayName(product),
         ...(usesImeiTracking ? { imei_uuid: match.imei?.uuid, imei: match.imei?.imei_1 || product.imei, imei_numbers: match.imei ? imeiListText(match.imei) : imeiListText(product) } : {}),
+        ...(rules.showBatch ? { batch_number: product.batch_number || match.product?.batch_number } : {}),
+        ...(rules.showExpiry ? { expiry_date: product.expiry_date || match.product?.expiry_date } : {}),
         quantity,
         price: unit.sale_price,
         stock_quantity: stockQuantity,
@@ -2053,7 +2144,7 @@ function POS2({ data, brand, refresh }) {
             <button key={product.uuid} onClick={() => addToCart(product)}>
               <div className="product-thumb">{product.image ? <img src={product.image} alt="" /> : <Smartphone size={22} />}</div>
               <strong>{productDisplayName(product)}</strong>
-              <span>{product.barcode || product.secondary_barcode || product.sku || product.product_code || imeiListText(product)}</span>
+              <span>{product.barcode || product.secondary_barcode || product.sku || product.product_code || (rules.showImei ? imeiListText(product) : '')}</span>
               <b>{money(product.sale_price)}</b>
               <small>Available: {stockAvailableLabel(product)}</small>
             </button>
@@ -2072,7 +2163,7 @@ function POS2({ data, brand, refresh }) {
         </div>
         <DataTable
           rows={cart}
-          columns={['product_name', 'selected_unit', 'unit_conversion', 'available_stock', 'price', 'quantity', 'line_total']}
+          columns={rules.posCartColumns}
           actions={(row) => <button className="danger-btn" onClick={() => setCart(cart.filter((item) => item.cart_key !== row.cart_key))}><Trash2 size={15} /></button>}
           editable={updateCartLine}
         />
@@ -3314,13 +3405,33 @@ function invoiceWithPaymentMeta(invoice = {}, payment = {}) {
   };
 }
 
+function invoiceExtraHeaders(brand = {}) {
+  const rules = businessTypeRules(brand);
+  if (rules.showImei) return ['IMEI / Serial'];
+  if (rules.showBatch || rules.showExpiry) return ['Batch', 'Expiry'];
+  return [];
+}
+
+function invoiceExtraCells(item, brand = {}) {
+  const rules = businessTypeRules(brand);
+  if (rules.showImei) return [imeiListText(item)];
+  if (rules.showBatch || rules.showExpiry) return [item.batch_number || '', item.expiry_date || ''];
+  return [];
+}
+
 function printInvoice(sale, cart = [], brand = {}, format = 'a4') {
   const qr = receiptQrData(sale);
   const payment = paymentDisplay(sale);
   const settlement = payment.changeReturn > 0
     ? `<p><strong>Change Return:</strong> ${money(payment.changeReturn)}</p>`
     : `<p><strong>Due Amount:</strong> ${money(payment.dueAmount)}</p>`;
-  const html = `<section class="receipt-shell ${receiptFormatClass(format)}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p><strong>Invoice Number:</strong> ${sale.invoice_number || ''}</p><p><strong>Customer:</strong> ${sale.customer_name || 'Walk-in Customer'}</p><p><strong>Date:</strong> ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr><th>Product</th><th>Sold As</th><th>Contains</th><th>IMEI / Serial</th><th>Qty</th><th>Rate</th><th>Total</th></tr></thead><tbody>${cart.length ? cart.map((item) => `<tr><td>${saleLineDisplayName(item)}</td><td>${lineUnitLabel(item)}</td><td>${lineConversionLabel(item)}</td><td>${imeiListText(item)}</td><td>${lineQuantityLabel(item)}</td><td>${money(item.price)}</td><td>${money(lineTotal(item))}</td></tr>`).join('') : `<tr><td colspan="7">Saved invoice record</td></tr>`}</tbody></table><h3 class="receipt-total">Grand Total: ${money(payment.total)}</h3><p><strong>Payment Method:</strong> ${payment.method}</p><p><strong>Paid Amount:</strong> ${money(payment.paid)}</p>${settlement}<p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
+  const extraHeaders = invoiceExtraHeaders(brand);
+  const headers = ['Product', 'Sold As', 'Contains', ...extraHeaders, 'Qty', 'Rate', 'Total'];
+  const rows = cart.length ? cart.map((item) => {
+    const cells = [saleLineDisplayName(item), lineUnitLabel(item), lineConversionLabel(item), ...invoiceExtraCells(item, brand), lineQuantityLabel(item), money(item.price), money(lineTotal(item))];
+    return `<tr>${cells.map((cell) => `<td>${cell || ''}</td>`).join('')}</tr>`;
+  }).join('') : `<tr><td colspan="${headers.length}">Saved invoice record</td></tr>`;
+  const html = `<section class="receipt-shell ${receiptFormatClass(format)}"><div class="receipt-head"><div>${brand?.logo ? `<img src="${brand.logo}" style="max-height:64px">` : ''}<div class="brand">${shopDisplayName(brand)}</div><p class="muted">${brand?.address || ''}<br>${brand?.contact_number || ''}</p></div><div><h2>${brand?.invoice_header || 'Sales Invoice'} ${sale.invoice_number}</h2><p><strong>Invoice Number:</strong> ${sale.invoice_number || ''}</p><p><strong>Customer:</strong> ${sale.customer_name || 'Walk-in Customer'}</p><p><strong>Date:</strong> ${sale.sold_at ? new Date(sale.sold_at).toLocaleString() : new Date().toLocaleString()}</p><p><strong>QR:</strong> ${qr.replaceAll('\n', ' | ')}</p></div></div><table><thead><tr>${headers.map((header) => `<th>${header}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table><h3 class="receipt-total">Grand Total: ${money(payment.total)}</h3><p><strong>Payment Method:</strong> ${payment.method}</p><p><strong>Paid Amount:</strong> ${money(payment.paid)}</p>${settlement}<p class="muted">Warranty notes apply according to product condition and shop policy.</p><p>${brand?.footer || 'Thank you for your business.'}</p></section>`;
   printHtml(`Invoice ${sale.invoice_number}`, html);
 }
 
@@ -3361,7 +3472,10 @@ function invoicePdfLines(invoice, cart, brand = {}) {
     brand?.contact_number || '',
     `Invoice Number: ${invoice.invoice_number}`,
     `Customer Name: ${invoice.customer_name || 'Walk-in Customer'}`,
-    ...cart.map((item) => `${saleLineDisplayName(item)} | Sold As: ${lineUnitLabel(item)} | Contains: ${lineConversionLabel(item)} | Qty: ${lineQuantityLabel(item)} | Rate: ${money(item.price)} | Total: ${money(lineTotal(item))}${imeiListText(item) ? ` | IMEI: ${imeiListText(item)}` : ''}`),
+    ...cart.map((item) => {
+      const meta = invoiceMetaParts(item, brand).map(([label, value]) => ` | ${label}: ${value}`).join('');
+      return `${saleLineDisplayName(item)} | Sold As: ${lineUnitLabel(item)} | Contains: ${lineConversionLabel(item)} | Qty: ${lineQuantityLabel(item)} | Rate: ${money(item.price)} | Total: ${money(lineTotal(item))}${meta}`;
+    }),
     `Subtotal: ${money(invoice.subtotal)}`,
     `Discount: ${money(invoice.discount)}`,
     `Tax: ${money(invoice.tax)}`,
@@ -3376,8 +3490,8 @@ function invoicePdfLines(invoice, cart, brand = {}) {
 function invoiceMessage(invoice, brand = {}, cart = []) {
   const payment = paymentDisplay(invoice);
   const items = cart.length ? `\nItems:\n${cart.map((item) => {
-    const imei = imeiListText(item);
-    return `- ${saleLineDisplayName(item)}\n  Sold As: ${lineUnitLabel(item)}\n  Contains: ${lineConversionLabel(item)}\n  Qty: ${lineQuantityLabel(item)}\n  Rate: ${money(item.price || 0)}\n  Total: ${money(lineTotal(item))}${imei ? `\n  IMEI: ${imei}` : ''}`;
+    const meta = invoiceMetaParts(item, brand).map(([label, value]) => `\n  ${label}: ${value}`).join('');
+    return `- ${saleLineDisplayName(item)}\n  Sold As: ${lineUnitLabel(item)}\n  Contains: ${lineConversionLabel(item)}\n  Qty: ${lineQuantityLabel(item)}\n  Rate: ${money(item.price || 0)}\n  Total: ${money(lineTotal(item))}${meta}`;
   }).join('\n')}` : '';
   const status = invoice.status || (payment.dueAmount > 0 ? 'Credit Due' : 'Paid');
   const settlement = payment.changeReturn > 0 ? `Change Return: ${money(payment.changeReturn)}` : `Due Amount: ${money(payment.dueAmount)}`;
