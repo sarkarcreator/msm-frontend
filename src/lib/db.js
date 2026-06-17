@@ -148,6 +148,14 @@ function getAuthHeader() {
 }
 
 /**
+ * SECURITY: Centralized token getter for all sync operations
+ * Uses SecureTokenStorage with automatic fallback for compatibility
+ */
+function getToken() {
+  return SecureTokenStorage.getToken() || '';
+}
+
+/**
  * SECURITY: Check if user has a valid token
  */
 function hasValidToken() {
@@ -680,14 +688,14 @@ export async function barcodeLookup(scan, data = null, options = {}) {
   const term = normalizeScan(scan);
   if (!term) throw new Error('Scan code is required.');
 
-  if (navigator.onLine && localStorage.getItem('dsh_token')) {
+  if (navigator.onLine && getToken()) {
     try {
       const params = new URLSearchParams({ q: term });
       if (options.limit) params.set('limit', String(options.limit));
       const response = await fetch(`${API_URL}/barcode/lookup?${params.toString()}`, {
         headers: {
           Accept: 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+          Authorization: `Bearer ${getToken()}`,
           'X-Device-Id': localStorage.getItem('dsh_device_id') || ensureDeviceId(),
         },
       });
@@ -710,14 +718,14 @@ export async function barcodeLookup(scan, data = null, options = {}) {
 
 export async function receiveInventoryByScan({ scan, product_uuid, quantity = 1, cost_price, purchase_price, batch_number, expiry_date, reference, reason } = {}, data = null) {
   const qty = Math.max(1, Number(quantity || 1));
-  if (navigator.onLine && localStorage.getItem('dsh_token')) {
+  if (navigator.onLine && getToken()) {
     try {
       const response = await fetch(`${API_URL}/barcode/receive`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+          Authorization: `Bearer ${getToken()}`,
           'X-Device-Id': localStorage.getItem('dsh_device_id') || ensureDeviceId(),
         },
         body: JSON.stringify({ scan, product_uuid, quantity: qty, cost_price, purchase_price, batch_number, expiry_date, reference, reason }),
@@ -1164,7 +1172,7 @@ export async function createManualRepairReceipt(record) {
 }
 
 export async function saveHospitalPatientWorkflow(record) {
-  if (!navigator.onLine || !localStorage.getItem('dsh_token')) {
+  if (!navigator.onLine || !getToken()) {
     throw new Error('Hospital workflow requires online backend validation.');
   }
 
@@ -1173,7 +1181,7 @@ export async function saveHospitalPatientWorkflow(record) {
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+      Authorization: `Bearer ${getToken()}`,
       'X-Device-Id': localStorage.getItem('dsh_device_id') || ensureDeviceId(),
     },
     body: JSON.stringify(record),
@@ -1189,13 +1197,13 @@ export async function saveHospitalPatientWorkflow(record) {
 }
 
 export async function syncHospitalPatientWorkflow(patientUuid) {
-  if (!patientUuid || !navigator.onLine || !localStorage.getItem('dsh_token')) return { skipped: true };
+  if (!patientUuid || !navigator.onLine || !getToken()) return { skipped: true };
   await syncNow();
   return { synced: true };
 }
 
 export async function transitionHospitalPatientStatus(patientUuid, status) {
-  if (!navigator.onLine || !localStorage.getItem('dsh_token')) {
+  if (!navigator.onLine || !getToken()) {
     throw new Error('Patient status transition requires online backend validation.');
   }
   const response = await fetch(`${API_URL}/hospital/patients/${patientUuid}/status`, {
@@ -1203,7 +1211,7 @@ export async function transitionHospitalPatientStatus(patientUuid, status) {
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+      Authorization: `Bearer ${getToken()}`,
     },
     body: JSON.stringify({ status }),
   });
@@ -1220,7 +1228,7 @@ export async function transitionHospitalPatientStatus(patientUuid, status) {
 export async function completeHospitalPrescription(prescriptionUuid) {
   const response = await fetch(`${API_URL}/hospital/prescriptions/${prescriptionUuid}/complete`, {
     method: 'POST',
-    headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+    headers: { Accept: 'application/json', Authorization: `Bearer ${getToken()}` },
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -1238,7 +1246,7 @@ export async function completeHospitalLabReport(reportUuid, details = {}) {
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+      Authorization: `Bearer ${getToken()}`,
     },
     body: JSON.stringify(details),
   });
@@ -1258,7 +1266,7 @@ export async function completeHospitalRadiologyReport(reportUuid, details = {}) 
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+      Authorization: `Bearer ${getToken()}`,
     },
     body: JSON.stringify(details),
   });
@@ -1279,7 +1287,7 @@ export async function reviewHospitalReport(store, reportUuid, doctor_review_stat
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+      Authorization: `Bearer ${getToken()}`,
     },
     body: JSON.stringify({ doctor_review_status }),
   });
@@ -1299,7 +1307,7 @@ export async function recalculateHospitalBill(billUuid, paid) {
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+      Authorization: `Bearer ${getToken()}`,
     },
     body: JSON.stringify({ paid }),
   });
@@ -1319,7 +1327,7 @@ export async function saveHospitalBillPayment(billUuid, { paid_amount, payment_m
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+      Authorization: `Bearer ${getToken()}`,
     },
     body: JSON.stringify({ paid_amount, payment_method }),
   });
@@ -1368,7 +1376,7 @@ function businessTypeKey(type) {
 
 function retailBackendPrefix() {
   const scope = currentScope();
-  if (!navigator.onLine || !localStorage.getItem('dsh_token')) return '';
+  if (!navigator.onLine || !getToken()) return '';
   const key = businessTypeKey(scope.business_type);
   if (key === 'mobile_shop') return 'mobile-shop';
   if (key === 'traders') return 'traders';
@@ -1390,7 +1398,7 @@ async function retailEnterpriseRequest(prefix, endpoint, data) {
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}`,
+      Authorization: `Bearer ${getToken()}`,
       'X-Device-Id': localStorage.getItem('dsh_device_id') || ensureDeviceId(),
     },
     body: JSON.stringify(data),
@@ -1534,7 +1542,7 @@ export async function searchMobileShopImei(query = '', filters = {}) {
     const params = new URLSearchParams({ q: query || '', per_page: String(filters.per_page || 25) });
     if (filters.status) params.set('status', filters.status);
     const response = await fetch(`${API_URL}/mobile-shop/imeis/search?${params}`, {
-      headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+      headers: { Accept: 'application/json', Authorization: `Bearer ${getToken()}` },
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.message || 'IMEI search failed.');
@@ -1582,7 +1590,7 @@ export async function createPurchaseReturn(record) {
 export async function fetchMobileShopReport(type) {
   if (shouldUseMobileShopBackend()) {
     const response = await fetch(`${API_URL}/mobile-shop/reports/${encodeURIComponent(type)}`, {
-      headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+      headers: { Accept: 'application/json', Authorization: `Bearer ${getToken()}` },
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.message || 'Mobile Shop report failed.');
@@ -1872,7 +1880,7 @@ export async function reportData(type) {
 }
 
 export async function syncNow() {
-  if (!navigator.onLine || !localStorage.getItem('dsh_token')) return { skipped: true };
+  if (!navigator.onLine || !getToken()) return { skipped: true };
   const db = await database();
   const scope = currentScope();
   const pending = (await db.getAll('sync_queue')).filter((item) => {
@@ -1888,7 +1896,7 @@ export async function syncNow() {
   try {
     const response = await fetch(`${API_URL}/sync/push`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
       body: JSON.stringify({
         device_id: localStorage.getItem('dsh_device_id') || ensureDeviceId(),
         operations: pending.map((item) => ({
@@ -1929,12 +1937,12 @@ export async function syncNow() {
 }
 
 export async function pullRemoteChanges() {
-  if (!navigator.onLine || !localStorage.getItem('dsh_token')) return { skipped: true };
+  if (!navigator.onLine || !getToken()) return { skipped: true };
   const db = await database();
   const since = localStorage.getItem('dsh_sync_since') || new Date(Date.now() - 86400000 * 30).toISOString();
   try {
     const response = await fetch(`${API_URL}/sync/pull?since=${encodeURIComponent(since)}`, {
-      headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+      headers: { Accept: 'application/json', Authorization: `Bearer ${getToken()}` },
     });
     const payload = await response.json().catch(() => ({}));
     if (response.status === 401) return handleUnauthorizedSession();
@@ -2024,10 +2032,10 @@ export async function searchMedicines(query, filters = {}) {
     if (value && key !== 'per_page') params.set(key, value);
   }
 
-  if (navigator.onLine && localStorage.getItem('dsh_token')) {
+  if (navigator.onLine && getToken()) {
     try {
       const response = await fetch(`${API_URL}/medicines/search?${params}`, {
-        headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+        headers: { Accept: 'application/json', Authorization: `Bearer ${getToken()}` },
       });
       const payload = await response.json();
       if (response.ok) {
@@ -2063,7 +2071,7 @@ export async function offlineMedicineSearch(query = '', filters = {}) {
 }
 
 export async function importMedicinesFile(file, mapping = {}, rollback = true) {
-  if (navigator.onLine && localStorage.getItem('dsh_token')) {
+  if (navigator.onLine && getToken()) {
     const form = new FormData();
     form.append('file', file);
     form.append('rollback_on_failure', rollback ? '1' : '0');
@@ -2072,7 +2080,7 @@ export async function importMedicinesFile(file, mapping = {}, rollback = true) {
     }
     const response = await fetch(`${API_URL}/medicines/import`, {
       method: 'POST',
-      headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+      headers: { Accept: 'application/json', Authorization: `Bearer ${getToken()}` },
       body: form,
     });
     const payload = await response.json().catch(() => ({}));

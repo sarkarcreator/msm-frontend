@@ -654,7 +654,8 @@ const HEADER_LABELS = {
 function App() {
   const [active, setActive] = useState('dashboard');
   const [auth, setAuth] = useState(() => ({
-    token: localStorage.getItem('dsh_token') || '',
+    // SECURITY: Use SecureTokenStorage for token validation on app load
+    token: SecureTokenStorage.getToken() || '',
     user: localStorage.getItem('dsh_user_name') || '',
     role: localStorage.getItem('dsh_user_role') || '',
   }));
@@ -2125,7 +2126,8 @@ function notify(message) {
 async function deleteEverywhere(store, row, mode) {
   await deleteRecord(store, row.uuid, mode);
   window.dispatchEvent(new CustomEvent('msm:record-deleted', { detail: { store, uuid: row.uuid, mode } }));
-  if (navigator.onLine && localStorage.getItem('dsh_token')) {
+  // SECURITY: Use SecureTokenStorage for token validation
+  if (navigator.onLine && SecureTokenStorage.getToken()) {
     try {
       await deleteRemoteRecord(store, row.uuid, mode);
       await syncNow();
