@@ -23,6 +23,7 @@ import {
   recalculateHospitalBill, saveHospitalBillPayment, createTraderDeliveryChallan, createTraderRecovery,
   barcodeLookup, receiveInventoryByScan,
 } from './lib/db.js';
+import { POSLandscape } from './components/POS/POSLandscape.jsx';
 import './styles/app.css';
 
 const MODULES = [
@@ -844,7 +845,7 @@ function App() {
         </header>
         <div className="content">
           {active === 'dashboard' && <Dashboard snapshot={snapshot} data={data} brand={brand} auth={auth} refresh={refresh} />}
-          {active === 'pos' && <POS2 data={data} brand={brand} refresh={refresh} />}
+          {active === 'pos' && <POSLandscape data={data} brand={brand} refresh={refresh} />}
           {active === 'sales' && <Sales rows={data.sales || []} brand={brand} refresh={refresh} />}
           {active === 'products' && <Inventory rows={data.products || []} brand={brand} refresh={refresh} />}
           {active === 'customers' && <CrudModule config={RESOURCES.customers} rows={data.customers || []} refresh={refresh} extraActions={(row) => <button className="ghost-btn" onClick={() => printLedger(row, data.customer_ledgers || [])}><Printer size={15} /> Ledger</button>} />}
