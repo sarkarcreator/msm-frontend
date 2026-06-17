@@ -98,12 +98,16 @@ const SecureTokenStorage = {
   isValidTokenFormat(token) {
     if (!token || typeof token !== 'string') return false;
     
-    // Basic format check: should be alphanumeric with dots (JWT format)
-    // or a reasonable length random string
+    // Laravel Sanctum token format: ID|plainTextToken
+    const isSanctumToken = /^[0-9]+\|[A-Za-z0-9_-]{40,}$/.test(token);
+    
+    // Standard JWT format: header.payload.signature
     const isJwtFormat = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token);
+    
+    // Plain token (fallback for custom token implementations)
     const isPlainToken = /^[A-Za-z0-9_-]{20,128}$/.test(token);
     
-    return isJwtFormat || isPlainToken;
+    return isSanctumToken || isJwtFormat || isPlainToken;
   },
   
   /**
