@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import {
   API_URL,
+  SecureTokenStorage,
   activeLicenseStatus, addExpense, addMobileWalletTransaction, createPurchase, createSale, dashboardSnapshot,
   activateLicenseAccount,
   cleanupStartupData, deleteRecord, deleteRemoteRecord, downloadPdf, ensureDeviceId, exportBackupFile, exportCsv, generateLicense,
@@ -797,11 +798,14 @@ function App() {
     const roleName = userRole(session.user);
     const licenseUuid = session.settings?.license_uuid || session.user?.license_uuid || session.license?.uuid || '';
     const businessType = session.settings?.business_type || session.user?.business_type || session.license?.business_type || '';
-    localStorage.setItem('dsh_token', session.token);
+    
+    // SECURITY: Use secure token storage with expiry
+    SecureTokenStorage.setToken(session.token);
     localStorage.setItem('dsh_user_name', session.user?.name || session.user?.email || 'User');
     localStorage.setItem('dsh_user_role', roleName);
     localStorage.setItem('dsh_license_uuid', licenseUuid);
     localStorage.setItem('dsh_business_type', businessType);
+    
     setAuth({ token: session.token, user: session.user?.name || session.user?.email || 'User', role: roleName });
     if (session.settings) {
       saveBrandSettings(session.settings).then(refresh);
@@ -810,11 +814,8 @@ function App() {
   }
 
   function handleLogout() {
-    localStorage.removeItem('dsh_token');
-    localStorage.removeItem('dsh_user_name');
-    localStorage.removeItem('dsh_user_role');
-    localStorage.removeItem('dsh_license_uuid');
-    localStorage.removeItem('dsh_business_type');
+    // SECURITY: Use secure token storage to clear all auth data
+    SecureTokenStorage.clearToken();
     setAuth({ token: '', user: '', role: '' });
     setData({});
     setSnapshot(null);

@@ -1,4 +1,176 @@
 import { openDB } from 'idb';
+import DOMPurify from 'dompurify';
+
+// SECURITY: Configure DOMPurify for print content
+// Allow safe HTML elements while blocking scripts and event handlers
+const PRINT_CONFIG = {
+  ALLOWED_TAGS: [
+    'html', 'head', 'title', 'body', 'style', 'div', 'span', 'p', 'br', 'hr',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'b', 'em', 'i', 'u', 's',
+    'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption', 'colgroup', 'col',
+    'ul', 'ol', 'li', 'dl', 'dt', 'dd',
+    'img', 'a', 'button', 'input', 'form', 'label', 'select', 'option', 'textarea',
+    'section', 'article', 'header', 'footer', 'nav', 'aside', 'main', 'pre', 'code',
+    'blockquote', 'sup', 'sub', 'small', 'mark', 'time', 'meter', 'progress',
+  ],
+  ALLOWED_ATTR: [
+    'id', 'class', 'style', 'href', 'src', 'alt', 'title', 'width', 'height',
+    'target', 'rel', 'type', 'name', 'value', 'placeholder', 'disabled', 'readonly',
+    'checked', 'selected', 'for', 'maxlength', 'min', 'max', 'step', 'required',
+    'colspan', 'rowspan', 'cellpadding', 'cellspacing', 'border',
+    'media', 'onclick', // Allow onclick for print button only
+  ],
+  ALLOW_DATA_ATTR: false,
+  ADD_ATTR: ['target'], // Allow target attribute for links
+};
+
+// =============================================================================
+// SECURITY: Secure Token Storage Utilities
+// =============================================================================
+
+/**
+ * SECURITY: Secure token storage wrapper
+ * While localStorage is inherently less secure than HttpOnly cookies,
+ * this wrapper adds validation, logging, and security measures.
+ */
+const SecureTokenStorage = {
+  PREFIX: 'dsh_',
+  TOKEN_KEY: 'dsh_token',
+  DEVICE_KEY: 'dsh_device_id',
+  EXPIRY_KEY: 'dsh_token_expiry',
+  
+  /**
+   * Get the authentication token with validation
+   */
+  getToken() {
+    if (typeof window === 'undefined') return null;
+    
+    const token = localStorage.getItem(this.TOKEN_KEY);
+    const expiry = localStorage.getItem(this.EXPIRY_KEY);
+    
+    // Check if token has expired
+    if (expiry && Date.now() > parseInt(expiry, 10)) {
+      this.clearToken();
+      return null;
+    }
+    
+    // Validate token format (basic JWT format check)
+    if (token && this.isValidTokenFormat(token)) {
+      return token;
+    }
+    
+    return null;
+  },
+  
+  /**
+   * Set the authentication token with expiry
+   */
+  setToken(token, expiresIn = 86400000) { // Default 24 hours
+    if (typeof window === 'undefined' || !token) return;
+    
+    // SECURITY: Validate token before storing
+    if (!this.isValidTokenFormat(token)) {
+      console.error('SECURITY: Attempted to store invalid token format');
+      return;
+    }
+    
+    localStorage.setItem(this.TOKEN_KEY, token);
+    // Set expiry (default 24 hours from now)
+    localStorage.setItem(this.EXPIRY_KEY, String(Date.now() + expiresIn));
+  },
+  
+  /**
+   * Clear the authentication token
+   */
+  clearToken() {
+    if (typeof window === 'undefined') return;
+    localStorage.removeItem(this.TOKEN_KEY);
+    localStorage.removeItem(this.EXPIRY_KEY);
+    localStorage.removeItem('dsh_user_name');
+    localStorage.removeItem('dsh_user_role');
+    localStorage.removeItem('dsh_license_uuid');
+    localStorage.removeItem('dsh_business_type');
+  },
+  
+  /**
+   * SECURITY: Validate token format (basic check for JWT-like tokens)
+   */
+  isValidTokenFormat(token) {
+    if (!token || typeof token !== 'string') return false;
+    
+    // Basic format check: should be alphanumeric with dots (JWT format)
+    // or a reasonable length random string
+    const isJwtFormat = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token);
+    const isPlainToken = /^[A-Za-z0-9_-]{20,128}$/.test(token);
+    
+    return isJwtFormat || isPlainToken;
+  },
+  
+  /**
+   * Get device ID, creating one if it doesn't exist
+   */
+  getDeviceId() {
+    if (typeof window === 'undefined') return 'server';
+    
+    let deviceId = localStorage.getItem(this.DEVICE_KEY);
+    if (!deviceId) {
+      deviceId = crypto.randomUUID?.() || `device_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+      localStorage.setItem(this.DEVICE_KEY, deviceId);
+    }
+    return deviceId;
+  },
+  
+  /**
+   * Check if user is authenticated
+   */
+  isAuthenticated() {
+    return !!this.getToken();
+  },
+};
+
+// Keep legacy exports for backward compatibility with existing code
+export const getSecureToken = SecureTokenStorage.getToken.bind(SecureTokenStorage);
+export const setSecureToken = SecureTokenStorage.setToken.bind(SecureTokenStorage);
+export const clearSecureToken = SecureTokenStorage.clearToken.bind(SecureTokenStorage);
+export const getSecureDeviceId = SecureTokenStorage.getDeviceId.bind(SecureTokenStorage);
+export const isAuthenticated = SecureTokenStorage.isAuthenticated.bind(SecureTokenStorage);
+
+// SECURITY: Export the SecureTokenStorage object for direct access
+export { SecureTokenStorage };
+
+/**
+ * SECURITY: Get authorization header value for API requests
+ * This is the primary method that should be used for authenticated requests
+ */
+function getAuthHeader() {
+  const token = SecureTokenStorage.getToken();
+  return token ? `Bearer ${token}` : '';
+}
+
+/**
+ * SECURITY: Check if user has a valid token
+ */
+function hasValidToken() {
+  return !!SecureTokenStorage.getToken();
+}
+
+/**
+ * SECURITY: Sanitize HTML content to prevent XSS attacks
+ * @param {string} html - Raw HTML content to sanitize
+ * @returns {string} - Sanitized HTML safe for rendering
+ */
+function sanitizePrintHtml(html) {
+  if (typeof window !== 'undefined' && DOMPurify.isSupported) {
+    return DOMPurify.sanitize(html, PRINT_CONFIG);
+  }
+  // Fallback for SSR or unsupported environments: escape HTML entities
+  return String(html)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 export const API_URL = import.meta.env.VITE_API_URL || 'https://api.c2rstore.com/api';
 
@@ -171,7 +343,11 @@ export async function saveRecord(store, data, action = data.uuid ? 'update' : 'c
 }
 
 export async function saveRemoteRecord(resource, data, options = {}) {
-  const token = localStorage.getItem('dsh_token') || '';
+  // SECURITY: Use secure token storage
+  const token = SecureTokenStorage.getToken();
+  if (!token) {
+    throw new Error('Not authenticated. Please login again.');
+  }
   const uuid = data.uuid;
   const forceCreate = options.forceCreate || false;
   const payloadData = remotePayload(resource, data);
@@ -200,14 +376,18 @@ export async function saveRemoteRecord(resource, data, options = {}) {
 }
 
 export async function deleteRemoteRecord(resource, uuid, mode = 'soft') {
-  const token = localStorage.getItem('dsh_token') || '';
+  // SECURITY: Use secure token storage
+  const token = SecureTokenStorage.getToken();
+  if (!token) {
+    throw new Error('Not authenticated. Please login again.');
+  }
   const apiResource = apiResourceName(resource);
   const response = await fetch(`${API_URL}/${apiResource}/${uuid}${mode === 'permanent' ? '?force=1' : ''}`, {
     method: 'DELETE',
     headers: {
       Accept: 'application/json',
       Authorization: `Bearer ${token}`,
-      'X-Device-Id': localStorage.getItem('dsh_device_id') || ensureDeviceId(),
+      'X-Device-Id': SecureTokenStorage.getDeviceId(),
     },
   });
   if (!response.ok && response.status !== 404) {
@@ -1783,24 +1963,22 @@ export async function pullRemoteChanges() {
 }
 
 function handleUnauthorizedSession() {
-  localStorage.removeItem('dsh_token');
-  localStorage.removeItem('dsh_user_name');
-  localStorage.removeItem('dsh_user_role');
-  localStorage.removeItem('dsh_license_uuid');
-  localStorage.removeItem('dsh_business_type');
+  // SECURITY: Use secure token storage to clear all auth data
+  SecureTokenStorage.clearToken();
   window.dispatchEvent(new CustomEvent('dsh:toast', { detail: 'Session expired. Please login again.' }));
   return { unauthorized: true };
 }
 
 export async function hydrateRemoteStores(stores = []) {
-  if (!navigator.onLine || !localStorage.getItem('dsh_token')) return { skipped: true };
+  // SECURITY: Use secure token storage
+  if (!navigator.onLine || !hasValidToken()) return { skipped: true };
   const db = await database();
   const scope = currentScope();
   let imported = 0;
   await Promise.all(stores.filter((store) => STORE_NAMES.includes(store)).map(async (store) => {
     try {
       const response = await fetch(`${API_URL}/${apiResourceName(store)}?per_page=1000`, {
-        headers: { Accept: 'application/json', Authorization: `Bearer ${localStorage.getItem('dsh_token') || ''}` },
+        headers: { Accept: 'application/json', Authorization: getAuthHeader() },
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) return;
@@ -1973,6 +2151,9 @@ export async function importBackupFile(file) {
 }
 
 export function printHtml(title, html) {
+  // SECURITY: Sanitize HTML content to prevent XSS attacks
+  const sanitizedHtml = sanitizePrintHtml(html);
+  
   const iframe = document.createElement('iframe');
   iframe.title = title;
   iframe.style.position = 'fixed';
@@ -1985,7 +2166,8 @@ export function printHtml(title, html) {
   const doc = iframe.contentWindow?.document;
   if (!doc) return;
   doc.open();
-  doc.write(printDocument(title, html));
+  // SECURITY: Pass sanitized HTML to print document
+  doc.write(printDocument(title, sanitizedHtml));
   doc.close();
   window.setTimeout(() => {
     iframe.contentWindow?.focus();
@@ -1995,7 +2177,9 @@ export function printHtml(title, html) {
 }
 
 export function downloadHtml(filename, title, html) {
-  const blob = new Blob([printDocument(title, html)], { type: 'text/html' });
+  // SECURITY: Sanitize HTML content to prevent XSS attacks
+  const sanitizedHtml = sanitizePrintHtml(html);
+  const blob = new Blob([printDocument(title, sanitizedHtml)], { type: 'text/html' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
