@@ -22,7 +22,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .content { @apply p-4 pb-20; overflow-x: hidden; }
 .stack { @apply space-y-4; }
 .split { @apply grid gap-4 xl:grid-cols-2; }
-.pos-grid { @apply grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_520px]; }
+.pos-grid { @apply grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_560px]; }
 
 .nav-btn { @apply mb-1 flex h-10 w-full items-center gap-3 rounded-2xl px-3 text-left text-sm font-semibold text-black/65 hover:bg-black/5 dark:text-white/70 dark:hover:bg-white/10; }
 .nav-btn-active { @apply text-white hover:brightness-95 dark:text-white; background: var(--accent); }
@@ -91,13 +91,37 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .inventory-total span { @apply rounded bg-white/70 px-3 py-2 text-sm font-bold text-black/60 dark:bg-white/5 dark:text-white/60; }
 .inventory-total strong { @apply text-base text-ink dark:text-white; }
 
-.product-picker { @apply mt-4 grid gap-3 sm:grid-cols-2; }
-.product-picker button { @apply grid gap-1 rounded-2xl border border-black/10 bg-paper/80 p-3 text-left transition hover:-translate-y-1 hover:shadow-lg dark:border-white/10 dark:bg-black/20; }
-.product-thumb { @apply mb-2 grid h-16 w-full place-items-center rounded bg-white text-black/50 dark:bg-white/10 dark:text-white/60; }
+.product-picker { @apply mt-4 grid gap-3 sm:grid-cols-2 2xl:grid-cols-3; }
+.product-picker button { @apply grid min-h-40 gap-1 rounded-2xl border border-black/10 bg-paper/80 p-4 text-left transition hover:-translate-y-1 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-mint/25 dark:border-white/10 dark:bg-black/20; }
+.product-picker button.active { @apply border-mint bg-mint/10 shadow-lg; }
+.product-thumb { @apply mb-2 grid h-20 w-full place-items-center rounded bg-white text-black/50 dark:bg-white/10 dark:text-white/60; }
 .product-thumb img { @apply h-full w-full rounded object-cover; }
 .product-picker span, .product-picker small { @apply text-xs text-black/55 dark:text-white/55; }
-.product-picker b { @apply text-coral; }
+.product-picker strong { @apply min-h-10 text-base leading-tight; }
+.product-picker b { @apply text-lg text-coral; }
 .smart-pos { @apply items-start; }
+.pos-products-panel .search-box, .pos-products-panel .lookup-box input { @apply h-12 rounded-2xl text-base; }
+.pos-products-panel .lookup-results { @apply top-14; }
+.pos-head { @apply xl:grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_auto]; }
+.load-more-products { @apply mt-4 h-12; }
+.pos-cart-lines { @apply grid max-h-[38vh] gap-2 overflow-y-auto pr-1; }
+.pos-cart-line { @apply grid min-w-0 items-center gap-2 rounded-2xl border border-black/10 bg-white/75 p-3 dark:border-white/10 dark:bg-black/20; grid-template-columns: minmax(0, 1fr) auto auto auto auto; }
+.pos-cart-line.selected { @apply border-mint bg-mint/10; }
+.pos-cart-title { @apply grid min-w-0 gap-1; }
+.pos-cart-title strong { @apply truncate text-sm font-black; }
+.pos-cart-title span { @apply text-xs font-bold text-black/50 dark:text-white/55; }
+.pos-cart-line select { @apply h-11 rounded-2xl border border-black/10 bg-white px-3 text-sm font-bold text-ink dark:border-white/10 dark:bg-black/20 dark:text-white; }
+.qty-stepper { @apply grid grid-cols-[52px_70px_52px] overflow-hidden rounded-2xl border border-black/10 bg-white dark:border-white/10 dark:bg-black/20; }
+.qty-stepper button { @apply h-12 text-xl font-black text-ink hover:bg-mint/10 dark:text-white; }
+.qty-stepper input { @apply h-12 min-w-0 border-x border-black/10 bg-transparent text-center text-lg font-black outline-none dark:border-white/10; }
+.pos-price-input { @apply h-12 w-24 rounded-2xl border border-black/10 bg-white px-3 text-right text-sm font-black text-ink outline-none dark:border-white/10 dark:bg-black/20 dark:text-white; }
+.line-total { @apply text-right text-base font-black text-ink dark:text-white; }
+.pos-remove { @apply h-12 w-12 px-0; }
+.pos-payment-grid input, .pos-payment-grid select { @apply h-12 text-base font-black; }
+.pos-numpad { @apply my-4 grid grid-cols-3 gap-2 rounded-2xl border border-black/10 bg-paper/70 p-3 dark:border-white/10 dark:bg-black/20; }
+.pos-numpad button { @apply h-12 rounded-2xl border border-black/10 bg-white text-base font-black transition hover:-translate-y-0.5 hover:bg-mint/10 dark:border-white/10 dark:bg-white/5; }
+.pos-numpad button.active { @apply bg-mint text-white; }
+.pos-numpad .danger-key { @apply col-span-3 border-coral/25 bg-coral/10 text-coral hover:bg-coral hover:text-white; }
 .customer-collapsible { @apply my-4 grid gap-3 rounded-2xl border border-black/10 bg-paper/70 p-3 dark:border-white/10 dark:bg-black/20; }
 .customer-collapsible label { @apply grid gap-2 text-sm font-semibold text-black/60 dark:text-white/60; }
 .customer-collapsible select { @apply h-10 rounded-2xl border border-black/10 bg-white px-3 text-ink outline-none focus:border-mint dark:border-white/10 dark:bg-black/20 dark:text-white; }
@@ -107,6 +131,7 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .payment-summary .ok strong { @apply text-mint; }
 .payment-summary .bad strong { @apply text-coral; }
 .pos-actions { @apply grid grid-cols-1 sm:grid-cols-2; }
+.pos-actions .primary-btn, .pos-actions .ghost-btn, .pos-actions .danger-btn { @apply h-12 text-base; }
 
 .chart-card { @apply relative mt-4 overflow-hidden rounded-2xl border border-black/10 bg-gradient-to-br from-white to-mint/5 p-4 dark:border-white/10 dark:from-white/5 dark:to-mint/10; }
 .chart-grid-lines { @apply pointer-events-none absolute inset-x-4 top-6 bottom-14 grid grid-rows-3; }
@@ -251,4 +276,6 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 
 @media (max-width: 1023px) {
   .content { padding-bottom: 96px; }
+  .pos-cart-line { grid-template-columns: minmax(0, 1fr) auto; }
+  .line-total { @apply text-left; }
 }

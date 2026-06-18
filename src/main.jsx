@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import {
   API_URL,
-  activeLicenseStatus, addExpense, addMobileWalletTransaction, createPurchase, createSale, dashboardSnapshot,
+  activeLicenseStatus, addExpense, addMobileWalletTransaction, createPurchase, createSale as createRetailSale, dashboardSnapshot,
   activateLicenseAccount,
   cleanupStartupData, deleteRecord, deleteRemoteRecord, downloadPdf, ensureDeviceId, exportBackupFile, exportCsv, generateLicense,
   getBrandSettings, importBackupFile, importCsvRecords, importMasterCatalogCsv, listRecords, notificationCenter,
@@ -588,6 +588,11 @@ const MOBILE_SHOP_REMOTE_STORES = [
   'purchase_returns', 'purchase_return_items',
 ];
 
+const GENERAL_STORE_REMOTE_STORES = [
+  'products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items',
+  'inventory_transactions', 'cashbook', 'customer_ledgers', 'supplier_ledgers', 'master_catalogs',
+];
+
 const TRADERS_REMOTE_STORES = [
   'products', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items',
   'inventory_transactions', 'cashbook', 'trader_companies', 'trader_brands',
@@ -679,6 +684,9 @@ function App() {
     }
     if (auth.token && navigator.onLine && (brand?.business_type === 'Mobile Shop' || localStorage.getItem('dsh_business_type') === 'Mobile Shop')) {
       await hydrateRemoteStores(MOBILE_SHOP_REMOTE_STORES);
+    }
+    if (auth.token && navigator.onLine && businessTypeKey(brand?.business_type || localStorage.getItem('dsh_business_type')) === 'general_store') {
+      await hydrateRemoteStores(GENERAL_STORE_REMOTE_STORES);
     }
     if (auth.token && navigator.onLine && businessTypeKey(brand?.business_type || localStorage.getItem('dsh_business_type')) === 'traders') {
       await hydrateRemoteStores(TRADERS_REMOTE_STORES);
@@ -2149,13 +2157,20 @@ function POS2({ data, brand, refresh }) {
   const [query, setQuery] = useState('');
   const [scan, setScan] = useState('');
   const [cart, setCart] = useState([]);
+  const [activeProductIndex, setActiveProductIndex] = useState(0);
+  const [visibleProducts, setVisibleProducts] = useState(36);
+  const [numpadTarget, setNumpadTarget] = useState('paid');
+  const [selectedCartKey, setSelectedCartKey] = useState('');
   const [payment, setPayment] = useState({ customer_uuid: '', payment_type: 'cash', discount: 0, tax: brand?.tax || 0, paid: 0, due_date: '' });
   const [quick, setQuick] = useState({ name: '', phone: '', address: '', cnic: '', notes: '' });
   const [customerOpen, setCustomerOpen] = useState(false);
   const [receiptFormat, setReceiptFormat] = useState(brand?.receipt_format || '80mm');
   const isTraders = businessTypeKey(brand?.business_type) === 'traders';
   const rules = businessTypeRules(brand);
-  const products = filterRows(data.products || [], query, rules.posSearch);
+  const productRows = data.products || [];
+  const products = filterRows(productRows, query, rules.posSearch).filter((product) => Number(product.quantity || 0) > 0 && product.status !== 'Inactive');
+  const productPage = products.slice(0, visibleProducts);
+  const productByUuid = useMemo(() => new Map(productRows.map((product) => [product.uuid, product])), [productRows]);
   const customerOptions = isTraders ? (data.trader_retailers || []).map((item) => ({ ...item, name: item.shop_name || item.owner_name })) : (data.customers || []);
   const customer = customerOptions.find((item) => item.uuid === payment.customer_uuid);
   const subtotal = cart.reduce((sum, item) => sum + Number(item.quantity) * Number(item.price), 0);
@@ -2165,12 +2180,42 @@ function POS2({ data, brand, refresh }) {
   const dueAmount = Math.max(0, total - paid);
   const draftInvoice = invoiceWithPaymentMeta({ invoice_number: 'DRAFT', customer_name: customer?.name || quick.name || 'Walk-in Customer', subtotal, discount: payment.discount, tax: payment.tax, total, paid, sold_at: new Date().toISOString() }, payment);
   const usesImeiTracking = businessTypeKey(brand?.business_type) === 'mobile_shop';
+  const selectedCartLine = cart.find((item) => item.cart_key === selectedCartKey) || cart[cart.length - 1] || null;
+
+  useEffect(() => {
+    setActiveProductIndex(0);
+    setVisibleProducts(36);
+  }, [query]);
+
+  useEffect(() => {
+    if (!selectedCartKey && cart.length) setSelectedCartKey(cart[cart.length - 1].cart_key);
+    if (selectedCartKey && !cart.some((item) => item.cart_key === selectedCartKey)) setSelectedCartKey(cart[cart.length - 1]?.cart_key || '');
+  }, [cart, selectedCartKey]);
+
+  function availableStock(productUuid) {
+    const product = productByUuid.get(productUuid);
+    return Math.max(0, Number(product?.quantity || 0));
+  }
+
+  function usedStock(productUuid, exceptKey = '') {
+    return cart.reduce((sum, item) => item.product_uuid === productUuid && item.cart_key !== exceptKey ? sum + Number(item.stock_quantity || 0) : sum, 0);
+  }
+
+  function canUseStock(productUuid, requestedStock, exceptKey = '') {
+    return usedStock(productUuid, exceptKey) + Number(requestedStock || 0) <= availableStock(productUuid);
+  }
 
   function addToCart(product, match = {}) {
     const unit = unitForMatch(product, match);
     const cartKey = match.imei?.uuid || `${product.uuid}:${unit.key}`;
     const quantity = 1;
     const stockQuantity = unit.factor;
+    const existingLine = cart.find((item) => item.cart_key === cartKey);
+    const requestedStock = existingLine ? Number(existingLine.stock_quantity || 0) + stockQuantity : stockQuantity;
+    if (!canUseStock(product.uuid, requestedStock, cartKey)) {
+      notify(`${productDisplayName(product)} stock is not enough.`);
+      return;
+    }
     setCart((items) => items.some((item) => item.cart_key === cartKey)
       ? items.map((item) => item.cart_key === cartKey ? { ...item, quantity: Number(item.quantity || 0) + quantity, stock_quantity: Number(item.stock_quantity || 0) + stockQuantity } : item)
       : [...items, {
@@ -2192,6 +2237,7 @@ function POS2({ data, brand, refresh }) {
         unit_barcode: unit.barcode,
         packaging_options: packagingUnits(product),
       }]);
+    setSelectedCartKey(cartKey);
   }
 
   function updateCartLine(row, key, value) {
@@ -2199,12 +2245,22 @@ function POS2({ data, brand, refresh }) {
       if (item.cart_key !== row.cart_key) return item;
       if (key === 'quantity') {
         const quantity = Math.max(1, Number(value || 1));
-        return { ...item, quantity, stock_quantity: quantity * Number(item.conversion_factor || 1) };
+        const stockQuantity = quantity * Number(item.conversion_factor || 1);
+        if (!canUseStock(item.product_uuid, stockQuantity, item.cart_key)) {
+          notify(`${item.product_name} stock is not enough.`);
+          return item;
+        }
+        return { ...item, quantity, stock_quantity: stockQuantity };
       }
       if (key === 'selected_unit') {
         const unit = (item.packaging_options || []).find((option) => option.key === value || option.unit === value) || item.packaging_options?.[0];
         if (!unit) return item;
         const quantity = Math.max(1, Number(item.quantity || 1));
+        const stockQuantity = quantity * unit.factor;
+        if (!canUseStock(item.product_uuid, stockQuantity, item.cart_key)) {
+          notify(`${item.product_name} stock is not enough.`);
+          return item;
+        }
         return {
           ...item,
           cart_key: `${item.product_uuid}:${unit.key}`,
@@ -2215,11 +2271,55 @@ function POS2({ data, brand, refresh }) {
           unit_barcode: unit.barcode,
           price: unit.sale_price,
           base_unit: unit.base_unit || item.base_unit || 'Piece',
-          stock_quantity: quantity * unit.factor,
+          stock_quantity: stockQuantity,
         };
       }
       return { ...item, [key]: ['price'].includes(key) ? Number(value) : value };
     }));
+  }
+
+  function adjustQuantity(row, delta) {
+    updateCartLine(row, 'quantity', Math.max(1, Number(row.quantity || 1) + delta));
+  }
+
+  function removeCartLine(cartKey) {
+    setCart((items) => items.filter((item) => item.cart_key !== cartKey));
+  }
+
+  function clearCart() {
+    setCart([]);
+    setSelectedCartKey('');
+  }
+
+  function cancelEntry() {
+    if (query) setQuery('');
+    else if (scan) setScan('');
+    else setCustomerOpen(false);
+  }
+
+  function setPaymentField(field, value) {
+    setPayment((current) => ({ ...current, [field]: value }));
+  }
+
+  function applyNumpad(value) {
+    if (numpadTarget === 'quantity') {
+      if (!selectedCartLine) return;
+      if (value === 'back') updateCartLine(selectedCartLine, 'quantity', String(selectedCartLine.quantity || '').slice(0, -1) || 1);
+      else if (value === 'clear') updateCartLine(selectedCartLine, 'quantity', 1);
+      else updateCartLine(selectedCartLine, 'quantity', `${selectedCartLine.quantity || ''}${value}`);
+      return;
+    }
+    const field = numpadTarget;
+    const current = String(payment[field] ?? '');
+    if (value === 'back') setPaymentField(field, current.slice(0, -1));
+    else if (value === 'clear') setPaymentField(field, '');
+    else if (value === '.' && current.includes('.')) return;
+    else setPaymentField(field, `${current}${value}`);
+  }
+
+  function addHighlightedProduct() {
+    const product = productPage[Math.min(activeProductIndex, productPage.length - 1)];
+    if (product) addToCart(product);
   }
 
   function scanToCart(match) {
@@ -2237,13 +2337,27 @@ function POS2({ data, brand, refresh }) {
   }
 
   async function completeSale() {
-    const retailer = isTraders ? customer : null;
-    const sale = await createSale({ ...payment, paid, retailer_uuid: retailer?.uuid || payment.customer_uuid, retailer_name: retailer?.shop_name || retailer?.name, route_uuid: retailer?.route_uuid, route_name: retailer?.route_name, territory_uuid: retailer?.territory_uuid, territory_name: retailer?.territory_name, cart });
-    const printableSale = invoiceWithPaymentMeta({ ...sale, customer_name: sale.customer_name || customer?.name || quick.name || 'Walk-in Customer', subtotal, discount: payment.discount, tax: payment.tax, total: sale.total ?? total, paid }, payment);
-    setCart([]);
-    setPayment({ customer_uuid: '', payment_type: 'cash', discount: 0, tax: brand?.tax || 0, paid: 0, due_date: '' });
-    await refresh();
-    printInvoice(printableSale, cart, brand, receiptFormat);
+    try {
+      if (!cart.length) return;
+      for (const item of cart) {
+        if (!canUseStock(item.product_uuid, item.stock_quantity, item.cart_key)) {
+          notify(`${item.product_name} stock changed. Refreshing POS.`);
+          await refresh();
+          return;
+        }
+      }
+      const retailer = isTraders ? customer : null;
+      const sale = await createRetailSale({ ...payment, paid, retailer_uuid: retailer?.uuid || payment.customer_uuid, retailer_name: retailer?.shop_name || retailer?.name, route_uuid: retailer?.route_uuid, route_name: retailer?.route_name, territory_uuid: retailer?.territory_uuid, territory_name: retailer?.territory_name, cart });
+      const printableSale = invoiceWithPaymentMeta({ ...sale, customer_name: sale.customer_name || customer?.name || quick.name || 'Walk-in Customer', subtotal, discount: payment.discount, tax: payment.tax, total: sale.total ?? total, paid }, payment);
+      clearCart();
+      setPayment({ customer_uuid: '', payment_type: 'cash', discount: 0, tax: brand?.tax || 0, paid: 0, due_date: '' });
+      await refresh();
+      printInvoice(printableSale, cart, brand, receiptFormat);
+      notify('Sale saved successfully');
+    } catch (error) {
+      notify(error.message || 'Sale could not be saved.');
+      await refresh();
+    }
   }
 
   async function createWalkIn() {
@@ -2263,29 +2377,37 @@ function POS2({ data, brand, refresh }) {
 
   useEffect(() => {
     const handler = (event) => {
-      if (event.key === 'F1') { event.preventDefault(); setCart([]); }
+      if (event.key === 'F1') { event.preventDefault(); clearCart(); }
       if (event.key === 'F2') { event.preventDefault(); document.querySelector('[data-customer-select]')?.focus(); }
       if (event.key === 'F3') { event.preventDefault(); document.querySelector('[data-product-search]')?.focus(); }
-      if (event.key === 'F4') { event.preventDefault(); document.querySelector('[data-paid-input]')?.focus(); }
+      if (event.key === 'F4') { event.preventDefault(); completeSale(); }
       if (event.key === 'F5') { event.preventDefault(); if (cart.length) printInvoice(draftInvoice, cart, brand, receiptFormat); }
+      if (event.key === 'Escape') { event.preventDefault(); cancelEntry(); }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, payment, quick, brand, receiptFormat]);
+  }, [cart, payment, quick, brand, receiptFormat, products, activeProductIndex]);
 
   return (
     <div className="pos-grid smart-pos">
-      <section className="panel">
-        <div className="module-head">
+      <section className="panel pos-products-panel">
+        <div className="module-head pos-head">
           <h2>Modern POS</h2>
           <span className="shortcut-pill"><Keyboard size={15} /> F1 New - F2 Customer - F3 Product - F4 Checkout - F5 Print</span>
         </div>
-        <SearchBox value={query} onChange={setQuery} placeholder="Product search, barcode, SKU or serial" inputProps={{ 'data-product-search': true }} />
+        <SearchBox value={query} onChange={setQuery} placeholder="Product search, barcode, SKU, IMEI or code" inputProps={{
+          'data-product-search': true,
+          onKeyDown: (event) => {
+            if (event.key === 'Enter') { event.preventDefault(); addHighlightedProduct(); }
+            if (event.key === 'ArrowRight' || event.key === 'ArrowDown') { event.preventDefault(); setActiveProductIndex((index) => Math.min(productPage.length - 1, index + 1)); }
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') { event.preventDefault(); setActiveProductIndex((index) => Math.max(0, index - 1)); }
+          },
+        }} />
         <UniversalProductLookup autoFocus value={scan} data={data} onChange={setScan} onPick={scanToCart} />
         <div className="product-picker">
-          {products.length ? products.map((product) => (
-            <button key={product.uuid} onClick={() => addToCart(product)}>
-              <div className="product-thumb">{product.image ? <img src={product.image} alt="" /> : <Smartphone size={22} />}</div>
+          {productPage.length ? productPage.map((product, index) => (
+            <button key={product.uuid} className={index === activeProductIndex ? 'active' : ''} onClick={() => addToCart(product)} onFocus={() => setActiveProductIndex(index)}>
+              <div className="product-thumb">{product.image ? <img src={product.image} alt="" /> : <Boxes size={28} />}</div>
               <strong>{productDisplayName(product)}</strong>
               <span>{product.barcode || product.secondary_barcode || product.sku || product.product_code || (rules.showImei ? imeiListText(product) : '')}</span>
               <b>{money(product.sale_price)}</b>
@@ -2293,6 +2415,7 @@ function POS2({ data, brand, refresh }) {
             </button>
           )) : <EmptyRows />}
         </div>
+        {products.length > visibleProducts && <button className="ghost-btn wide load-more-products" onClick={() => setVisibleProducts((count) => count + 36)}>Load More Products</button>}
       </section>
 
       <section className="panel cart-panel">
@@ -2304,12 +2427,25 @@ function POS2({ data, brand, refresh }) {
             <option value="a4">A4 Invoice</option>
           </select>
         </div>
-        <DataTable
-          rows={cart}
-          columns={rules.posCartColumns}
-          actions={(row) => <button className="danger-btn" onClick={() => setCart(cart.filter((item) => item.cart_key !== row.cart_key))}><Trash2 size={15} /></button>}
-          editable={updateCartLine}
-        />
+        <div className="pos-cart-lines">
+          {cart.length ? cart.map((row) => (
+            <div key={row.cart_key} className={`pos-cart-line ${selectedCartKey === row.cart_key ? 'selected' : ''}`} onClick={() => setSelectedCartKey(row.cart_key)}>
+              <div className="pos-cart-title">
+                <strong>{saleLineDisplayName(row)}</strong>
+                <span>{lineConversionLabel(row)} - Stock: {row.available_stock}</span>
+              </div>
+              {row.packaging_options?.length > 1 && <select value={row.selected_unit_key || row.packaging_options[0].key} onChange={(e) => { updateCartLine(row, 'selected_unit', e.target.value); setSelectedCartKey(`${row.product_uuid}:${e.target.value}`); }}>{row.packaging_options.map((unit) => <option key={unit.key} value={unit.key}>{unit.label || unit.unit}</option>)}</select>}
+              <div className="qty-stepper">
+                <button type="button" onClick={() => adjustQuantity(row, -1)}>-</button>
+                <input type="number" min="1" value={row.quantity} onFocus={() => { setSelectedCartKey(row.cart_key); setNumpadTarget('quantity'); }} onChange={(e) => updateCartLine(row, 'quantity', e.target.value)} />
+                <button type="button" onClick={() => adjustQuantity(row, 1)}>+</button>
+              </div>
+              <input className="pos-price-input" type="number" min="0" value={row.price} onChange={(e) => updateCartLine(row, 'price', e.target.value)} />
+              <strong className="line-total">{money(lineTotal(row))}</strong>
+              <button type="button" className="danger-btn pos-remove" onClick={() => removeCartLine(row.cart_key)}><Trash2 size={18} /></button>
+            </div>
+          )) : <EmptyRows />}
+        </div>
 
         <div className="customer-collapsible">
           <button type="button" className="ghost-btn" onClick={() => setCustomerOpen(true)}><Plus size={15} /> Quick Add Customer</button>
@@ -2321,12 +2457,18 @@ function POS2({ data, brand, refresh }) {
           </label>
         </div>
 
-        <div className="form-grid">
-          <label>Payment<select value={payment.payment_type} onChange={(e) => setPayment({ ...payment, payment_type: e.target.value })}><option value="cash">Cash</option><option value="credit">Credit</option><option value="partial">Partial</option></select></label>
-          <label>Discount<input type="number" value={payment.discount} onChange={(e) => setPayment({ ...payment, discount: e.target.value })} /></label>
-          <label>Tax<input type="number" value={payment.tax} onChange={(e) => setPayment({ ...payment, tax: e.target.value })} /></label>
-          <label>Paid<input data-paid-input type="number" value={payment.payment_type === 'credit' ? 0 : payment.paid || total} onChange={(e) => setPayment({ ...payment, paid: e.target.value })} /></label>
+        <div className="form-grid pos-payment-grid">
+          <label>Payment<select value={payment.payment_type} onChange={(e) => setPayment({ ...payment, payment_type: e.target.value })}><option value="cash">Cash</option><option value="card">Card</option><option value="credit">Credit</option><option value="partial">Partial</option></select></label>
+          <label>Discount<input type="number" value={payment.discount} onFocus={() => setNumpadTarget('discount')} onChange={(e) => setPayment({ ...payment, discount: e.target.value })} /></label>
+          <label>Tax<input type="number" value={payment.tax} onFocus={() => setNumpadTarget('tax')} onChange={(e) => setPayment({ ...payment, tax: e.target.value })} /></label>
+          <label>Paid<input data-paid-input type="number" value={payment.payment_type === 'credit' ? 0 : payment.paid || total} onFocus={() => setNumpadTarget('paid')} onChange={(e) => setPayment({ ...payment, paid: e.target.value })} /></label>
           <label>Due Date<input type="date" value={payment.due_date} onChange={(e) => setPayment({ ...payment, due_date: e.target.value })} /></label>
+        </div>
+
+        <div className="pos-numpad" aria-label="Numeric keypad">
+          {['quantity', 'discount', 'paid'].map((target) => <button type="button" key={target} className={numpadTarget === target ? 'active' : ''} onClick={() => setNumpadTarget(target)}>{target}</button>)}
+          {['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', 'back'].map((key) => <button type="button" key={key} onClick={() => applyNumpad(key)}>{key === 'back' ? 'Back' : key}</button>)}
+          <button type="button" className="danger-key" onClick={() => applyNumpad('clear')}>Clear</button>
         </div>
 
         <div className="payment-summary">
@@ -2343,6 +2485,7 @@ function POS2({ data, brand, refresh }) {
           <button className="ghost-btn" disabled={!cart.length} onClick={() => printInvoice(draftInvoice, cart, brand, receiptFormat)}><Printer size={16} /> Print Bill</button>
           <button className="ghost-btn" disabled={!cart.length} onClick={() => downloadPdf('invoice.pdf', 'Sales Invoice', invoicePdfLines(draftInvoice, cart, brand))}><FileDown size={16} /> PDF Bill</button>
           <button className="ghost-btn" disabled={!cart.length} onClick={shareInvoiceOnWhatsApp}><MessageCircle size={16} /> WhatsApp Bill</button>
+          <button className="danger-btn" disabled={!cart.length} onClick={clearCart}><Trash2 size={16} /> Clear Cart</button>
         </div>
       </section>
 
