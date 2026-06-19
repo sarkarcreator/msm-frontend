@@ -63,6 +63,8 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .sort-head span { @apply min-w-0 truncate; }
 .actions-head { @apply text-right; }
 .actions-cell { @apply text-right; }
+.select-cell { @apply w-12 text-center; }
+.select-cell input { @apply h-4 w-4 accent-mint; }
 .row-actions { @apply flex flex-wrap justify-end gap-2; }
 .row-actions .ghost-btn, .row-actions .danger-btn { @apply h-8 px-2 text-xs; }
 .cell-input { @apply h-9 w-24 rounded border border-black/10 bg-white px-2 dark:border-white/10 dark:bg-black/20; }

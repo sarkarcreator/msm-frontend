@@ -219,6 +219,32 @@ export async function deleteRemoteRecord(resource, uuid, mode = 'soft') {
   return true;
 }
 
+export async function deleteRemoteRecordsBulk(resource, uuids = [], mode = 'soft') {
+  const ids = [...new Set((uuids || []).filter(Boolean))];
+  if (!ids.length) return { deleted_count: 0, deleted_ids: [] };
+  const token = localStorage.getItem('dsh_token') || '';
+  const apiResource = apiResourceName(resource);
+  const response = await fetch(`${API_URL}/${apiResource}/bulk${mode === 'permanent' ? '?force=1' : ''}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+      'X-Device-Id': localStorage.getItem('dsh_device_id') || ensureDeviceId(),
+    },
+    body: JSON.stringify({ uuids: ids }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.message || Object.values(payload.errors || {}).flat().join(' ') || 'Remote bulk delete failed.';
+    throw new Error(detail);
+  }
+  for (const uuid of ids) {
+    await markRecordSynced(resource, uuid);
+  }
+  return payload;
+}
+
 function apiResourceName(resource) {
   return {
     customer_ledgers: 'customer-ledgers',
@@ -1920,9 +1946,10 @@ export async function importMasterCatalogCsv(file) {
   const records = parseCsv(text);
   let count = 0;
   for (const record of records) {
-    const productName = record.product_name || record.name;
+    const normalized = normalizeMasterCatalogRow(record);
+    const productName = normalized.product_name || normalized.name;
     if (!productName) continue;
-    await saveRecord('master_catalogs', { ...record, name: productName, product_name: productName });
+    await saveRecord('master_catalogs', { ...normalized, name: productName, product_name: productName });
     count += 1;
   }
   await auditLog('bulk_import', 'master_catalogs', crypto.randomUUID(), { count });
@@ -2322,6 +2349,20 @@ function normalizeMedicineRow(row) {
     batch_tracking: row.batch_tracking ?? true,
     expiry_tracking: row.expiry_tracking ?? true,
     status: row.status || 'Active',
+  };
+}
+
+function normalizeMasterCatalogRow(row = {}) {
+  const value = (...keys) => keys.map((key) => row[key]).find((item) => item !== undefined && item !== '');
+  const defaultCost = Math.max(0, Number(value('default_cost', 'cost_price', 'purchase_price', 'unit_cost_price', 'cost') || 0));
+  const defaultPrice = Math.max(0, Number(value('default_price', 'selling_price', 'sale_price', 'unit_sale_price', 'price') || 0));
+  const productName = value('product_name', 'name', 'item_name', 'product') || '';
+  return {
+    ...row,
+    name: productName,
+    product_name: productName,
+    default_cost: defaultCost,
+    default_price: defaultPrice,
   };
 }
 
