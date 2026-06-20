@@ -1524,8 +1524,6 @@ function CrudModule({ config, rows, refresh, extraActions, context = {} }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
-  const [bulkDeleting, setBulkDeleting] = useState(false);
-  const [selectedIds, setSelectedIds] = useState([]);
   const [viewing, setViewing] = useState(null);
   const importRef = useRef(null);
   const blankRecord = () => config.defaultRecord?.(context) || DEFAULT_RECORDS[config.title]?.() || {};
@@ -1560,6 +1558,8 @@ function CatalogModule({ rows, products, brand, refresh }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
   const [viewing, setViewing] = useState(null);
   const importRef = useRef(null);
   const config = RESOURCES.master_catalogs;
