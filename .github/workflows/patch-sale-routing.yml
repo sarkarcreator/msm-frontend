@@ -1,0 +1,55 @@
+name: Fix Super Admin sale routing
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch sale routing
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/lib/db.js')
+          text = path.read_text(encoding='utf-8')
+          old = """function retailBackendPrefix() {
+  const scope = currentScope();
+  if (!navigator.onLine || !localStorage.getItem('dsh_token')) return '';
+  const key = businessTypeKey(scope.business_type);
+  if (key === 'mobile_shop') return 'mobile-shop';
+  if (key === 'traders') return 'traders';
+  if (key === 'general_store') return 'general-store';
+  return '';
+}"""
+          new = """function retailBackendPrefix() {
+  const scope = currentScope();
+  const token = localStorage.getItem('dsh_token') || '';
+  const licenseUuid = localStorage.getItem('dsh_license_uuid') || '';
+  // Enterprise sale endpoints require a licensed tenant. Super Admin is a
+  // control-plane account and intentionally has no license UUID, so sales
+  // must use the normal local/offline path instead of a rejected enterprise call.
+  if (!navigator.onLine || !token || scope.role === 'Super Admin' || !licenseUuid) return '';
+  const key = businessTypeKey(scope.business_type);
+  if (key === 'mobile_shop') return 'mobile-shop';
+  if (key === 'traders') return 'traders';
+  if (key === 'general_store') return 'general-store';
+  return '';
+}"""
+          if old not in text:
+              raise SystemExit('Expected retailBackendPrefix block was not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Commit and cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/db.js
+          git commit -m "fix: prevent unlicensed super admin sale routing" || exit 0
+          git push
