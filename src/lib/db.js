@@ -73,7 +73,7 @@ const TENANT_SCOPED_STORES = new Set([
   'settings', 'notifications', 'inventory_transactions', 'manual_repair_receipts',
   'mobile_wallet_transactions', 'patients', 'assistants', 'hospital_prescriptions',
   'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports',
-  'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'imei_registry',
+  'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'medicines', 'imei_registry',
   'imei_movements', 'warranty_claims', 'sale_returns', 'sale_return_items',
   'purchase_returns', 'purchase_return_items', 'sync_queue',
   'trader_companies', 'trader_brands', 'trader_territories', 'trader_routes',
@@ -156,7 +156,10 @@ function scopedDedupeKey(store, row, rawKey) {
 
 export async function getRecord(store, uuid) {
   const db = await database();
-  return db.get(store, uuid);
+  const record = await db.get(store, uuid);
+  return record && !record.deleted_at && !record.quarantined_at && scopedRecordVisible(store, record)
+    ? record
+    : undefined;
 }
 
 export async function saveRecord(store, data, action = data.uuid ? 'update' : 'create') {
@@ -1838,7 +1841,7 @@ export async function hydrateRemoteStores(stores = []) {
           license_uuid: scope.license_uuid || row.license_uuid,
           business_type: scope.business_type || row.business_type,
           sync_status: 'synced',
-        })));
+        }));
         imported += 1;
       }
     } catch {
