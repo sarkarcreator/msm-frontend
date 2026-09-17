@@ -1,7 +1,8 @@
 const originalFetch = window.fetch.bind(window);
 const inflight = new Map();
-const recent = new Map();
-const diagnostics = { requests: 0, deduped: 0, retries429: 0, failures: 0 };
+const responseCache = new Map();
+const diagnostics = { requests: 0, deduped: 0, cached: 0, retries429: 0, failures: 0 };
+const SESSION_CACHE_TTL = 30000;
 
 function isApiRequest(input) {
   try {
@@ -18,6 +19,11 @@ function requestKey(input, init = {}) {
   if (method !== 'GET' && method !== 'HEAD') return null;
   const headers = new Headers(init.headers || (typeof input !== 'string' ? input?.headers : undefined));
   return `${method}|${url}|${headers.get('Authorization') || ''}`;
+}
+
+function isSessionRequest(input, init = {}) {
+  const key = requestKey(input, init);
+  return Boolean(key && /\/me(?:\?|$)/i.test(key.split('|')[1] || ''));
 }
 
 async function wait(ms) {
@@ -38,6 +44,15 @@ async function guardedFetch(input, init = {}) {
     return response.clone();
   }
 
+  if (isSessionRequest(input, init)) {
+    const cached = responseCache.get(key);
+    if (cached && Date.now() - cached.timestamp < SESSION_CACHE_TTL) {
+      diagnostics.cached += 1;
+      return cached.response.clone();
+    }
+    responseCache.delete(key);
+  }
+
   const request = (async () => {
     let response;
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -54,7 +69,9 @@ async function guardedFetch(input, init = {}) {
   inflight.set(key, request);
   try {
     const response = await request;
-    recent.set(key, Date.now());
+    if (isSessionRequest(input, init) && response.ok) {
+      responseCache.set(key, { timestamp: Date.now(), response: response.clone() });
+    }
     return response.clone();
   } catch (error) {
     diagnostics.failures += 1;
