@@ -1,0 +1,52 @@
+name: Connect business runtime
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'chore: connect main runtime to business registry'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch main runtime bridge
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/main.jsx')
+          text = path.read_text(encoding='utf-8')
+          if "import { filterModulesForRuntime } from './config/businessRuntime.js';" not in text:
+              marker = "import './styles/app.css';"
+              if marker not in text:
+                  raise SystemExit('style import marker not found')
+              text = text.replace(marker, marker + "\nimport { filterModulesForRuntime } from './config/businessRuntime.js';", 1)
+          start = text.find('function modulesForBusiness(modules, brand, role) {')
+          if start < 0:
+              raise SystemExit('modulesForBusiness function not found')
+          end = text.find('\n}\n\nfunction businessTypeKey(type) {', start)
+          if end < 0:
+              raise SystemExit('modulesForBusiness end marker not found')
+          end += 2
+          replacement = '''function modulesForBusiness(modules, brand, role) {
+  const roleModules = ROLE_MODULES[role] || ROLE_MODULES.Cashier;
+  return filterModulesForRuntime(modules, brand, role, roleModules);
+}'''
+          text = text[:start] + replacement + text[end:]
+          path.write_text(text, encoding='utf-8')
+          PY
+          git diff --check
+          git diff -- src/main.jsx
+          if git diff --quiet -- src/main.jsx; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/main.jsx
+          git commit -m 'chore: connect main runtime to business registry'
+          git push origin main
