@@ -6,9 +6,9 @@ import {
 /**
  * Canonical business registry.
  *
- * The registry is deliberately UI-only: it decides which capabilities a tenant
- * can see. Authorization and tenant isolation remain server-side concerns.
- * Keep ids stable because they are also used by permissions and IndexedDB.
+ * This is the single UI capability map for the Business OS. It controls
+ * presentation/module availability only; authentication, authorization and
+ * tenant isolation remain server-side responsibilities.
  */
 export const BUSINESS_REGISTRY = {
   general_store: {
@@ -26,19 +26,19 @@ export const BUSINESS_REGISTRY = {
   pharmacy: {
     id: 'pharmacy',
     label: 'Pharmacy',
-    aliases: ['Pharmacy'],
+    aliases: ['Pharmacy', 'Medical Store', 'Medical Shop'],
     modules: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports', 'catalog', 'medicines', 'backup', 'users'],
   },
   hospital: {
     id: 'hospital',
     label: 'Hospital',
-    aliases: ['Hospital'],
+    aliases: ['Hospital', 'Clinic', 'Medical Center', 'Medical Centre'],
     modules: ['dashboard', 'patients', 'assistants', 'hospitalPharmacy', 'hospitalTasks', 'labReports', 'radiologyReports', 'hospitalBilling', 'expenses', 'notifications', 'accounting', 'reports', 'catalog', 'medicines', 'backup', 'users'],
   },
   traders: {
     id: 'traders',
     label: 'Traders',
-    aliases: ['Traders', 'Trader', 'Distribution'],
+    aliases: ['Traders', 'Trader', 'Distribution', 'Distributor'],
     modules: ['dashboard', 'pos', 'sales', 'products', 'customers', 'traderCompanies', 'traderBrands', 'traderTerritories', 'traderRoutes', 'traderSalesmen', 'traderRetailers', 'traderChallans', 'traderRecoveries', 'traderSalesmanLedger', 'traderDistributorLedger', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports', 'catalog', 'backup', 'users'],
   },
   electronics_store: {
@@ -50,13 +50,13 @@ export const BUSINESS_REGISTRY = {
   clothing_store: {
     id: 'clothing_store',
     label: 'Clothing Store',
-    aliases: ['Clothing Store'],
+    aliases: ['Clothing Store', 'Clothing', 'Garments', 'Garment Store'],
     modules: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports', 'catalog', 'backup', 'users'],
   },
   hardware_store: {
     id: 'hardware_store',
     label: 'Hardware Store',
-    aliases: ['Hardware Store'],
+    aliases: ['Hardware Store', 'Hardware'],
     modules: ['dashboard', 'pos', 'sales', 'products', 'customers', 'credit', 'purchases', 'suppliers', 'expenses', 'notifications', 'reports', 'catalog', 'backup', 'users'],
   },
 };
@@ -108,10 +108,14 @@ export const MODULES = [
   { id: 'licenses', label: 'Licenses', icon: KeyRound },
 ];
 
+function normalizeBusinessType(type) {
+  return String(type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
 export function businessTypeKey(type) {
-  const normalized = String(type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const normalized = normalizeBusinessType(type);
   for (const [key, definition] of Object.entries(BUSINESS_REGISTRY)) {
-    if (key === normalized || definition.aliases.some((alias) => alias.toLowerCase().replace(/[\s-]+/g, '_') === normalized)) {
+    if (key === normalized || definition.aliases.some((alias) => normalizeBusinessType(alias) === normalized)) {
       return key;
     }
   }
@@ -126,4 +130,12 @@ export function modulesForBusinessType(type, allModules = MODULES) {
 
 export function businessDefinition(type) {
   return BUSINESS_REGISTRY[businessTypeKey(type)] || BUSINESS_REGISTRY.general_store;
+}
+
+export function isModuleAllowedForBusiness(type, moduleId) {
+  return businessDefinition(type).modules.includes(moduleId);
+}
+
+export function getBusinessModuleIds(type) {
+  return [...businessDefinition(type).modules];
 }
