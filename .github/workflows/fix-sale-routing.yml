@@ -1,0 +1,48 @@
+name: Fix sale routing
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Patch enterprise sale routing
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/lib/db.js')
+          s = p.read_text(encoding='utf-8')
+          old = """function retailBackendPrefix() {\n  const scope = currentScope();\n  if (!navigator.onLine || !localStorage.getItem('dsh_token')) return '';\n  const key = businessTypeKey(scope.business_type);\n"""
+          new = """function retailBackendPrefix() {\n  const scope = currentScope();\n  const token = localStorage.getItem('dsh_token') || '';\n  const licenseUuid = localStorage.getItem('dsh_license_uuid') || '';\n  // Enterprise sale endpoints require a licensed tenant. Super Admin is a\n  // control-plane account and intentionally has no license UUID, so sales\n  // must use the normal local/offline path instead of a rejected enterprise call.\n  if (!navigator.onLine || !token || scope.role === 'Super Admin' || !licenseUuid) return '';\n  const key = businessTypeKey(scope.business_type);\n"""
+          if old in s and new not in s:
+              p.write_text(s.replace(old, new), encoding='utf-8')
+          elif new in s:
+              print('already patched')
+          else:
+              raise SystemExit('expected retailBackendPrefix block not found')
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/db.js
+          if git diff --cached --quiet; then
+            echo "No change needed"
+          else
+            git commit -m "fix(frontend): avoid enterprise sale calls without licensed tenant"
+            git push
+          fi
+      - name: Remove temporary workflow
+        run: |
+          rm -f .github/workflows/fix-sale-routing.yml
+          git add .github/workflows/fix-sale-routing.yml
+          git commit -m "chore: remove temporary sale routing fixer"
+          git push
