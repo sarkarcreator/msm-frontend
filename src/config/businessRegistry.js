@@ -2,6 +2,7 @@ import {
   BarChart3, Bell, Boxes, Calculator, Download, FileText, KeyRound, Printer,
   ReceiptText, Settings, Users, WalletCards, Wrench, Upload,
 } from 'lucide-react';
+import { startMedicineTenantGuard } from '../security/medicineTenantGuard.js';
 
 /**
  * Canonical business registry.
@@ -139,3 +140,8 @@ export function isModuleAllowedForBusiness(type, moduleId) {
 export function getBusinessModuleIds(type) {
   return [...businessDefinition(type).modules];
 }
+
+// The registry is imported by the main application entry path, so starting
+// the guard here protects the offline medicine cache without touching the
+// stable db.js implementation that also handles sales and sync.
+startMedicineTenantGuard();
