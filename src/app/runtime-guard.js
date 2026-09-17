@@ -2,7 +2,7 @@ const originalFetch = window.fetch.bind(window);
 const inflight = new Map();
 const responseCache = new Map();
 const diagnostics = { requests: 0, deduped: 0, cached: 0, retries429: 0, failures: 0 };
-const SESSION_CACHE_TTL = 30000;
+const SESSION_CACHE_TTL = 60000;
 
 function isApiRequest(input) {
   try {
@@ -24,10 +24,6 @@ function requestKey(input, init = {}) {
 function isSessionRequest(input, init = {}) {
   const key = requestKey(input, init);
   return Boolean(key && /\/me(?:\?|$)/i.test(key.split('|')[1] || ''));
-}
-
-async function wait(ms) {
-  await new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 async function guardedFetch(input, init = {}) {
@@ -54,14 +50,10 @@ async function guardedFetch(input, init = {}) {
   }
 
   const request = (async () => {
-    let response;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      response = await originalFetch(input, init);
-      if (response.status !== 429 || attempt > 0) break;
-      diagnostics.retries429 += 1;
-      const retryAfter = Number(response.headers.get('Retry-After') || 0);
-      await wait(Math.min(5000, Math.max(700, retryAfter * 1000 || 1000)));
-    }
+    const response = await originalFetch(input, init);
+    // Do not immediately retry HTTP 429. A retry here can amplify rate limiting
+    // when the application refresh loop or several UI actions hit /me together.
+    if (response.status === 429) return response;
     if (!response.ok && response.status >= 500) diagnostics.failures += 1;
     return response;
   })();
