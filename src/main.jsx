@@ -2618,16 +2618,36 @@ function Credit({ data, refresh }) {
   const [payment, setPayment] = useState({ customer_uuid: '', amount: '', method: 'Cash', notes: '' });
   const [deleting, setDeleting] = useState(null);
   const [receiving, setReceiving] = useState(false);
+  const [liveLedgers, setLiveLedgers] = useState([]);
+  const [liveCustomers, setLiveCustomers] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([listRecords('customer_ledgers'), listRecords('customers')]).then(([ledgers, customers]) => {
+      if (!cancelled) {
+        setLiveLedgers(ledgers);
+        setLiveCustomers(customers);
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [data.customer_ledgers, data.customers]);
+  const ledgerRows = liveLedgers.length ? liveLedgers : (data.customer_ledgers || []);
+  const customerRows = liveCustomers.length ? liveCustomers : (data.customers || []);
   const creditBalances = useMemo(() => {
     const balances = new Map();
-    for (const row of data.customer_ledgers || []) {
+    for (const row of ledgerRows) {
       const uuid = String(row.customer_uuid || '');
       if (!uuid || row.deleted_at) continue;
       balances.set(uuid, (balances.get(uuid) || 0) + Number(row.amount || 0));
     }
+    for (const customer of customerRows) {
+      const uuid = String(customer.uuid || '');
+      if (!uuid || balances.has(uuid)) continue;
+      const balance = Number(customer.balance || 0);
+      if (balance > 0) balances.set(uuid, balance);
+    }
     return balances;
-  }, [data.customer_ledgers]);
-  const due = (data.customers || [])
+  }, [ledgerRows, customerRows]);
+  const due = customerRows
     .map((customer) => ({ ...customer, balance: Math.max(0, Number(creditBalances.get(String(customer.uuid)) ?? customer.balance ?? 0)) }))
     .filter((customer) => customer.balance > 0);
   async function submit(e) {
