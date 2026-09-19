@@ -1269,8 +1269,18 @@ function dashboardFinancialMetrics(data = {}) {
   const grossProfit = sales.reduce((sum, sale) => sum + Number(sale.profit || 0), 0);
   const expenses = (data.expenses || []).reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
   const inventoryValue = (data.products || []).reduce((sum, product) => sum + Number(product.quantity || 0) * Number(product.purchase_price || product.cost_price || 0), 0);
-  const cashbookBalance = (data.cashbook || []).reduce((sum, row) => sum + Number(row.debit || 0) - Number(row.credit || 0), 0);
-  const cashInHand = cashbookBalance || sales.reduce((sum, sale) => sum + Number(sale.paid || 0), 0) - expenses;
+  const activeSales = sales.filter((sale) => !sale.deleted_at);
+  const activeSaleUuids = new Set(activeSales.map((sale) => String(sale.uuid || '')).filter(Boolean));
+  const cashbookBalance = (data.cashbook || [])
+    .filter((row) => !row.deleted_at)
+    .filter((row) => {
+      const type = String(row.type || '').trim().toLowerCase();
+      const reference = String(row.reference || row.reference_uuid || '').trim();
+      if (type === 'sale' && reference) return activeSaleUuids.has(reference);
+      return true;
+    })
+    .reduce((sum, row) => sum + Number(row.debit || 0) - Number(row.credit || 0), 0);
+  const cashInHand = cashbookBalance || activeSales.reduce((sum, sale) => sum + Number(sale.paid || 0), 0) - expenses;
   const customerReceivables = (data.customers || []).reduce((sum, customer) => sum + Number(customer.balance || 0), 0)
     + sales.reduce((sum, sale) => sum + Number(sale.balance || 0), 0)
     + (data.hospital_bills || []).reduce((sum, bill) => sum + Number(bill.balance || 0), 0);
