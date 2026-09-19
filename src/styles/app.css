@@ -153,14 +153,14 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .pagination { @apply flex flex-wrap items-center justify-center gap-2 text-sm font-bold; }
 .table-footer { @apply mt-3 flex flex-wrap items-center justify-center gap-3 text-center text-sm font-bold text-black/55 dark:text-white/55; }
 
-.modal-backdrop { @apply fixed inset-0 z-[100] grid place-items-center bg-black/65 p-3 backdrop-blur-sm; animation: fadeIn .16s ease both; }
-.modal { width: min(900px, 95vw); max-height: 90vh; @apply flex min-h-0 flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-[#182322]; animation: modalIn .18s ease both; }
-.modal.small { width: min(540px, 95vw); }
-.modal form { @apply flex min-h-0 max-h-[90vh] flex-col; }
-.modal-header { @apply sticky top-0 z-10 mb-0 flex min-h-16 items-center justify-between gap-3 border-b border-black/10 bg-white px-5 py-4 dark:border-white/10 dark:bg-[#182322]; }
-.modal-header h2 { @apply text-base font-medium; }
-.modal-body { @apply min-h-0 overflow-y-auto px-5 py-4; }
-.modal-footer { @apply sticky bottom-0 z-10 mt-0 flex min-h-16 items-center justify-between gap-3 border-t border-black/10 bg-white px-5 py-4 dark:border-white/10 dark:bg-[#182322]; }
+.modal-backdrop { @apply fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/65 p-3 backdrop-blur-sm; animation: fadeIn .16s ease both; }
+.modal { width: min(960px, 96vw); max-height: 92vh; @apply flex min-h-0 flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-[#182322]; animation: modalIn .18s ease both; }
+.modal.small { width: min(560px, 96vw); }
+.modal form { @apply flex min-h-0 h-full max-h-[92vh] flex-col; }
+.modal-header { @apply sticky top-0 z-10 mb-0 flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-black/10 bg-white px-5 py-4 dark:border-white/10 dark:bg-[#182322]; }
+.modal-header h2 { @apply min-w-0 text-base font-medium; }
+.modal-body { @apply min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4; }
+.modal-footer { @apply sticky bottom-0 z-10 mt-0 flex min-h-16 shrink-0 items-center justify-between gap-3 border-t border-black/10 bg-white px-5 py-4 dark:border-white/10 dark:bg-[#182322]; }
 .modal-body .form-grid, .modal-body.form-grid { @apply w-full gap-3 sm:grid-cols-2; }
 .modal-body.form-grid { @apply grid; }
 .modal-body.form-grid.single { @apply sm:grid-cols-2; }
