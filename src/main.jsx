@@ -2666,9 +2666,29 @@ function Credit({ data, refresh }) {
     }
     return balances;
   }, [ledgerRows, customerRows]);
-  const due = customerRows
-    .map((customer) => ({ ...customer, balance: Math.max(0, Number(creditBalances.get(String(customer.uuid)) ?? customer.balance ?? 0)) }))
-    .filter((customer) => customer.balance > 0);
+  const due = useMemo(() => {
+    const customersByUuid = new Map(customerRows.map((customer) => [String(customer.uuid || ''), customer]));
+    const merged = [...customerRows];
+    for (const sale of data.sales || []) {
+      const uuid = String(sale.customer_uuid || '');
+      const balance = Number(sale.balance || 0);
+      if (!uuid || balance <= 0) continue;
+      const existing = customersByUuid.get(uuid);
+      if (!existing) {
+        const synthetic = {
+          uuid,
+          name: sale.customer_name || 'Customer',
+          phone: sale.customer_phone || sale.phone || '',
+          balance: 0,
+        };
+        customersByUuid.set(uuid, synthetic);
+        merged.push(synthetic);
+      }
+    }
+    return merged
+      .map((customer) => ({ ...customer, balance: Math.max(0, Number(creditBalances.get(String(customer.uuid)) ?? customer.balance ?? 0)) }))
+      .filter((customer) => customer.balance > 0);
+  }, [customerRows, creditBalances, data.sales]);
   async function submit(e) {
     e.preventDefault();
     await receiveCustomerPayment(payment);
