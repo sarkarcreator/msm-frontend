@@ -430,7 +430,7 @@ export async function activateLicenseAccount(record) {
 export async function deleteRecord(store, uuid, mode = 'soft') {
   const db = await database();
   const current = await db.get(store, uuid);
-  if (!current) return;
+  if (!current || !scopedRecordVisible(store, current)) return;
   if (store === 'licenses') {
     await deleteLicenseUsersLocally(db, current.uuid, mode);
   }
