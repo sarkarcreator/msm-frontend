@@ -156,10 +156,10 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .modal-backdrop { @apply fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/65 p-3 backdrop-blur-sm; animation: fadeIn .16s ease both; }
 .modal { width: min(960px, 96vw); max-height: 92vh; @apply flex min-h-0 flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-[#182322]; animation: modalIn .18s ease both; }
 .modal.small { width: min(560px, 96vw); }
-.modal form { @apply flex min-h-0 h-full max-h-[92vh] flex-col; }
+.modal form { @apply flex min-h-0 max-h-[92vh] flex-col; }
 .modal-header { @apply sticky top-0 z-10 mb-0 flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-black/10 bg-white px-5 py-4 dark:border-white/10 dark:bg-[#182322]; }
 .modal-header h2 { @apply min-w-0 text-base font-medium; }
-.modal-body { @apply min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4; }
+.modal-body { max-height: calc(92vh - 128px); @apply min-h-0 overflow-y-auto overscroll-contain px-5 py-4; }
 .modal-footer { @apply sticky bottom-0 z-10 mt-0 flex min-h-16 shrink-0 items-center justify-between gap-3 border-t border-black/10 bg-white px-5 py-4 dark:border-white/10 dark:bg-[#182322]; }
 .modal-body .form-grid, .modal-body.form-grid { @apply w-full gap-3 sm:grid-cols-2; }
 .modal-body.form-grid { @apply grid; }
@@ -454,5 +454,5 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
   .modal { width: 100%; max-height: 96vh; border-radius: 1rem; }
   .modal form { @apply max-h-[96vh]; }
   .modal-header, .modal-footer { @apply px-4 py-3; }
-  .modal-body { @apply px-4 py-3; }
+  .modal-body { max-height: calc(96vh - 112px); @apply px-4 py-3; }
 }
