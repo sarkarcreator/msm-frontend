@@ -1791,6 +1791,12 @@ export async function pullRemoteChanges() {
       const store = operation.entity;
       if (!STORE_NAMES.includes(store)) continue;
       if (operation.action === 'conflict') continue;
+      if (scope.role !== 'Super Admin' && TENANT_SCOPED_STORES.has(store)) {
+        const operationLicense = String(operation.license_uuid || operation.payload?.license_uuid || '').trim().toLowerCase();
+        const operationBusiness = String(operation.business_type || operation.payload?.business_type || '').trim().toLowerCase();
+        if (!scope.license_uuid || (operationLicense && operationLicense !== String(scope.license_uuid).trim().toLowerCase())) continue;
+        if (operationBusiness && operationBusiness !== String(scope.business_type || '').trim().toLowerCase()) continue;
+      }
       const recordUuid = operation.uuid || operation.payload?.uuid;
       if (!recordUuid) continue;
       if (operation.action === 'force_delete') {
@@ -1834,6 +1840,12 @@ export async function hydrateRemoteStores(stores = []) {
       const rows = Array.isArray(payload) ? payload : payload.data || [];
       for (const row of rows) {
         if (!row?.uuid) continue;
+        if (scope.role !== 'Super Admin' && TENANT_SCOPED_STORES.has(store)) {
+          const rowLicense = String(row.license_uuid || '').trim().toLowerCase();
+          const rowBusiness = String(row.business_type || '').trim().toLowerCase();
+          if (!scope.license_uuid || (rowLicense && rowLicense !== String(scope.license_uuid).trim().toLowerCase())) continue;
+          if (rowBusiness && rowBusiness !== String(scope.business_type || '').trim().toLowerCase()) continue;
+        }
         await db.put(store, normalizeNumbers(scopeRecordForSave(store, {
           ...row,
           license_uuid: scope.license_uuid || row.license_uuid,
@@ -1990,8 +2002,9 @@ export async function importBackupFile(file) {
     if (!STORE_NAMES.includes(store) || !Array.isArray(rows)) continue;
     for (const row of rows) {
       if (!row?.uuid) continue;
-      if (scope.role !== 'Super Admin' && TENANT_SCOPED_STORES.has(store) && row.license_uuid && row.license_uuid !== scope.license_uuid) {
-        continue;
+      if (scope.role !== 'Super Admin' && TENANT_SCOPED_STORES.has(store)) {
+        if (row.license_uuid && String(row.license_uuid).toLowerCase() !== String(scope.license_uuid || '').toLowerCase()) continue;
+        if (row.business_type && String(row.business_type).toLowerCase() !== String(scope.business_type || '').toLowerCase()) continue;
       }
       await db.put(store, normalizeNumbers(scopeRecordForSave(store, row)));
       count += 1;
