@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal, createRoot } from 'react-dom/client';
+import { createRoot } from 'react-dom/client';
 import {
   BarChart3, Bell, Boxes, Calculator, Cloud, CloudOff, Download, Edit3, FileDown,
   FileText, KeyRound, Keyboard, MessageCircle, Moon, Palette, Plus, Printer,
@@ -2220,9 +2220,7 @@ function ModalShell({ children, onClose, size = '' }) {
       window.removeEventListener('keydown', handler);
     };
   }, [onClose]);
-  if (typeof document === 'undefined') return null;
-  const modal = <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><div className={`modal ${size}`} role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>{children}</div></div>;
-  return createPortal(modal, document.body);
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><div className={`modal ${size}`} role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>{children}</div></div>;
 }
 
 function notify(message) {
