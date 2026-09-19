@@ -743,7 +743,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (authenticated) refresh();
+    if (authenticated) refresh({ full: true });
   }, [authenticated]);
 
   useEffect(() => {
@@ -762,9 +762,26 @@ function App() {
 
   useEffect(() => {
     if (!authenticated) return undefined;
-    const handler = () => {
+    const handler = (event) => {
       window.clearTimeout(window.__msmRefreshTimer);
-      window.__msmRefreshTimer = window.setTimeout(() => refresh(), 120);
+      window.__msmRefreshTimer = window.setTimeout(async () => {
+        const store = event?.detail?.store || event?.detail?.entity || '';
+        if (store && STORE_NAMES.includes(store)) {
+          const rows = await listRecords(store);
+          setData((current) => ({ ...current, [store]: rows }));
+          setRefreshKey((value) => value + 1);
+          return;
+        }
+        if (event?.type === 'msm:product-saved' && event?.detail?.uuid) {
+          const product = await getRecord('products', event.detail.uuid);
+          if (product) {
+            setData((current) => ({ ...current, products: [...(current.products || []).filter((row) => row.uuid !== product.uuid), product] }));
+            setRefreshKey((value) => value + 1);
+            return;
+          }
+        }
+        await refresh();
+      }, 80);
     };
     window.addEventListener('msm:record-deleted', handler);
     window.addEventListener('msm:record-delete-synced', handler);
