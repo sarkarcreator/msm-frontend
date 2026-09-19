@@ -675,20 +675,22 @@ function App() {
   const role = auth.role || 'Cashier';
   const allowedModules = useMemo(() => modulesForBusiness(MODULES.filter((item) => (ROLE_MODULES[role] || ROLE_MODULES.Cashier).includes(item.id)), brand, role), [role, brand]);
 
-  async function refresh() {
-    await cleanupStartupData();
-    await hydrateSessionSettings();
-    if (auth.token && navigator.onLine) await syncNow();
-    if (auth.token && navigator.onLine && (brand?.business_type === 'Hospital' || localStorage.getItem('dsh_business_type') === 'Hospital')) {
+  async function refresh({ full = false } = {}) {
+    if (full) {
+      await cleanupStartupData();
+      await hydrateSessionSettings();
+      if (auth.token && navigator.onLine) await syncNow();
+    }
+    if (full && auth.token && navigator.onLine && (brand?.business_type === 'Hospital' || localStorage.getItem('dsh_business_type') === 'Hospital')) {
       await hydrateRemoteStores(HOSPITAL_REMOTE_STORES);
     }
-    if (auth.token && navigator.onLine && (brand?.business_type === 'Mobile Shop' || localStorage.getItem('dsh_business_type') === 'Mobile Shop')) {
+    if (full && auth.token && navigator.onLine && (brand?.business_type === 'Mobile Shop' || localStorage.getItem('dsh_business_type') === 'Mobile Shop')) {
       await hydrateRemoteStores(MOBILE_SHOP_REMOTE_STORES);
     }
-    if (auth.token && navigator.onLine && businessTypeKey(brand?.business_type || localStorage.getItem('dsh_business_type')) === 'general_store') {
+    if (full && auth.token && navigator.onLine && businessTypeKey(brand?.business_type || localStorage.getItem('dsh_business_type')) === 'general_store') {
       await hydrateRemoteStores(GENERAL_STORE_REMOTE_STORES);
     }
-    if (auth.token && navigator.onLine && businessTypeKey(brand?.business_type || localStorage.getItem('dsh_business_type')) === 'traders') {
+    if (full && auth.token && navigator.onLine && businessTypeKey(brand?.business_type || localStorage.getItem('dsh_business_type')) === 'traders') {
       await hydrateRemoteStores(TRADERS_REMOTE_STORES);
     }
     const stores = ['products', 'customers', 'suppliers', 'sales', 'sale_items', 'purchases', 'purchase_items', 'expenses', 'repairs', 'repair_updates', 'manual_repair_receipts', 'mobile_wallet_transactions', 'patients', 'assistants', 'hospital_prescriptions', 'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports', 'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'medicines', 'payments', 'cashbook', 'users', 'settings', 'notifications', 'licenses', 'audit_logs', 'inventory_transactions', 'customer_ledgers', 'supplier_ledgers', 'imei_registry', 'imei_movements', 'warranty_claims', 'sale_returns', 'sale_return_items', 'purchase_returns', 'purchase_return_items', 'trader_companies', 'trader_brands', 'trader_territories', 'trader_routes', 'trader_salesmen', 'trader_retailers', 'trader_delivery_challans', 'trader_recoveries', 'trader_salesman_ledgers', 'trader_distributor_ledgers', 'sync_queue'];
@@ -747,8 +749,8 @@ function App() {
   useEffect(() => {
     if (!authenticated) return undefined;
     const timer = window.setInterval(() => {
-      if (navigator.onLine) refresh();
-    }, brand?.business_type === 'Hospital' || localStorage.getItem('dsh_business_type') === 'Hospital' ? 5000 : 12000);
+      if (navigator.onLine) refresh({ full: true });
+    }, brand?.business_type === 'Hospital' || localStorage.getItem('dsh_business_type') === 'Hospital' ? 15000 : 30000);
     return () => window.clearInterval(timer);
   }, [authenticated, auth.token]);
 
@@ -797,7 +799,7 @@ function App() {
   async function handleSync() {
     setSyncing(true);
     await syncNow();
-    await refresh();
+    await refresh({ full: true });
     setSyncing(false);
   }
 
@@ -812,7 +814,7 @@ function App() {
     localStorage.setItem('dsh_business_type', businessType);
     setAuth({ token: session.token, user: session.user?.name || session.user?.email || 'User', role: roleName });
     if (session.settings) {
-      saveBrandSettings(session.settings).then(refresh);
+      saveBrandSettings(session.settings).then(() => refresh({ full: true }));
       window.__msmBrand = session.settings;
     }
   }
