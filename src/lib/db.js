@@ -1254,6 +1254,8 @@ async function cacheMobileShopWorkflow(payload) {
   const db = await database();
   const pairs = [
     ['sales', [payload.sale].filter(Boolean)],
+    ['customers', [payload.customer].filter(Boolean)],
+    ['customer_ledgers', [payload.customer_ledger].filter(Boolean)],
     ['sale_items', payload.sale_items || []],
     ['purchases', [payload.purchase].filter(Boolean)],
     ['purchase_items', payload.purchase_items || []],
