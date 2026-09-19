@@ -826,7 +826,31 @@ export async function createSale({ customer_uuid, payment_type, discount, tax, p
         customer_uuid, payment_type, discount, tax, paid, due_date, cart, ...extra,
       });
       await cacheMobileShopWorkflow(payload);
-      return payload.sale;
+
+      // Keep the local credit ledger in sync even when the enterprise backend
+      // cannot return the customer/ledger row (for example, an older customer
+      // record that exists locally but has not been hydrated remotely).
+      const remoteSale = payload.sale;
+      if (remoteSale?.customer_uuid && Number(remoteSale.balance || 0) > 0) {
+        const localCustomer = await getRecord('customers', remoteSale.customer_uuid);
+        if (localCustomer) {
+          const existingLedgers = await listRecords('customer_ledgers');
+          const reference = String(remoteSale.invoice_number || '');
+          const alreadyRecorded = existingLedgers.some(
+            (row) => !row.deleted_at && String(row.reference || '') === reference && String(row.customer_uuid || '') === String(remoteSale.customer_uuid),
+          );
+          if (!alreadyRecorded) {
+            await addCustomerLedger(
+              remoteSale.customer_uuid,
+              'Sale Credit',
+              Number(remoteSale.balance || 0),
+              remoteSale.invoice_number,
+              remoteSale.due_date,
+            );
+          }
+        }
+      }
+      return remoteSale;
     } catch (error) {
       if (navigator.onLine) throw error;
     }
