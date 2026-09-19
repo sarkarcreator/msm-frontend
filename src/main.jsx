@@ -2219,7 +2219,7 @@ function POS2({ data, brand, refresh }) {
   const isTraders = businessTypeKey(brand?.business_type) === 'traders';
   const rules = businessTypeRules(brand);
   const productRows = data.products || [];
-  const products = filterRows(productRows, query, rules.posSearch).filter((product) => Number(product.quantity || 0) > 0 && product.status !== 'Inactive');
+  const products = filterRows(productRows, query, rules.posSearch).filter((product) => product.status !== 'Inactive');
   const productPage = products.slice(0, visibleProducts);
   const productByUuid = useMemo(() => new Map(productRows.map((product) => [product.uuid, product])), [productRows]);
   const customerOptions = isTraders ? (data.trader_retailers || []).map((item) => ({ ...item, name: item.shop_name || item.owner_name })) : (data.customers || []);
