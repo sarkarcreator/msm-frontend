@@ -428,7 +428,8 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 .panel, .metric, .chart-card, .notification-card, .billing-line, .detail-item {
   animation: pageLift .28s ease both;
 }
-.content > * { animation: pageLift .28s ease both; }
+/* Keep content wrappers free of transform so fixed modals remain viewport-sized. */
+.content > * { animation: pageLiftOpacity .28s ease both; }
 .table-wrap, .lookup-results, .modal, .runtime-date-control { transition: box-shadow .2s ease, border-color .2s ease, transform .2s ease; }
 .table-wrap:hover { box-shadow: 0 14px 36px rgba(15,23,42,.055); }
 .primary-btn, .ghost-btn, .danger-btn, .icon-btn { will-change: transform; }
@@ -441,6 +442,10 @@ tbody tr:hover { @apply bg-mint/5 dark:bg-white/[0.06]; }
 @keyframes pageLift {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pageLiftOpacity {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
