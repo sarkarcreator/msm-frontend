@@ -73,7 +73,7 @@ const TENANT_SCOPED_STORES = new Set([
   'settings', 'notifications', 'inventory_transactions', 'manual_repair_receipts',
   'mobile_wallet_transactions', 'patients', 'assistants', 'hospital_prescriptions',
   'hospital_orders', 'hospital_tasks', 'lab_reports', 'radiology_reports',
-  'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'imei_registry',
+  'hospital_bills', 'hospital_bill_items', 'master_catalogs', 'medicines', 'imei_registry',
   'imei_movements', 'warranty_claims', 'sale_returns', 'sale_return_items',
   'purchase_returns', 'purchase_return_items', 'sync_queue',
   'trader_companies', 'trader_brands', 'trader_territories', 'trader_routes',
