@@ -156,7 +156,8 @@ function scopedDedupeKey(store, row, rawKey) {
 
 export async function getRecord(store, uuid) {
   const db = await database();
-  return db.get(store, uuid);
+  const record = await db.get(store, uuid);
+  return record && scopedRecordVisible(store, record) ? record : null;
 }
 
 export async function saveRecord(store, data, action = data.uuid ? 'update' : 'create') {
