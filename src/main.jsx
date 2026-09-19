@@ -2618,7 +2618,18 @@ function Credit({ data, refresh }) {
   const [payment, setPayment] = useState({ customer_uuid: '', amount: '', method: 'Cash', notes: '' });
   const [deleting, setDeleting] = useState(null);
   const [receiving, setReceiving] = useState(false);
-  const due = (data.customers || []).filter((customer) => Number(customer.balance || 0) > 0);
+  const creditBalances = useMemo(() => {
+    const balances = new Map();
+    for (const row of data.customer_ledgers || []) {
+      const uuid = String(row.customer_uuid || '');
+      if (!uuid || row.deleted_at) continue;
+      balances.set(uuid, (balances.get(uuid) || 0) + Number(row.amount || 0));
+    }
+    return balances;
+  }, [data.customer_ledgers]);
+  const due = (data.customers || [])
+    .map((customer) => ({ ...customer, balance: Math.max(0, Number(creditBalances.get(String(customer.uuid)) ?? customer.balance ?? 0)) }))
+    .filter((customer) => customer.balance > 0);
   async function submit(e) {
     e.preventDefault();
     await receiveCustomerPayment(payment);
