@@ -2632,6 +2632,25 @@ function Credit({ data, refresh }) {
   }, [data.customer_ledgers, data.customers]);
   const ledgerRows = liveLedgers.length ? liveLedgers : (data.customer_ledgers || []);
   const customerRows = liveCustomers.length ? liveCustomers : (data.customers || []);
+  const displayLedgerRows = useMemo(() => {
+    const rows = [...ledgerRows];
+    const existingReferences = new Set(rows.map((row) => String(row.reference || '')));
+    for (const sale of data.sales || []) {
+      const balance = Number(sale.balance || 0);
+      if (balance <= 0 || !sale.customer_uuid || existingReferences.has(String(sale.invoice_number || ''))) continue;
+      rows.push({
+        uuid: `sale-credit-${sale.uuid}`,
+        customer_uuid: sale.customer_uuid,
+        type: 'Sale Credit',
+        amount: balance,
+        reference: sale.invoice_number,
+        due_date: sale.due_date,
+        entry_at: sale.sold_at,
+        synthetic: true,
+      });
+    }
+    return rows.sort((a, b) => String(b.entry_at || '').localeCompare(String(a.entry_at || '')));
+  }, [ledgerRows, data.sales]);
   const creditBalances = useMemo(() => {
     const balances = new Map();
     for (const row of ledgerRows) {
@@ -2664,7 +2683,7 @@ function Credit({ data, refresh }) {
     await refresh();
     notify('Credit record deleted successfully');
   }
-  return <div className="stack"><section className="panel"><div className="module-head"><h2>Outstanding Balance</h2><button className="primary-btn" onClick={() => setReceiving(true)}><Plus size={16} /> Receive Payment</button></div><DataTable rows={due} columns={['name', 'phone', 'balance']} actions={(row) => <button className="ghost-btn" onClick={() => printLedger(row, data.customer_ledgers || [])}><Printer size={15} /> Statement</button>} /><h2 className="section-title">Credit Records</h2><DataTable rows={data.customer_ledgers || []} columns={['type', 'amount', 'reference', 'due_date', 'entry_at']} actions={(row) => <button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button>} />{deleting && <DeleteDialog row={deleting} store="customer_ledgers" onClose={() => setDeleting(null)} onDelete={(mode) => removeLedger(deleting, mode)} />}</section>{receiving && <ModalShell onClose={() => setReceiving(false)}><form onSubmit={submit}><div className="modal-header"><h2>Receive Payment</h2><button type="button" className="icon-btn" onClick={() => setReceiving(false)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Customer<select required value={payment.customer_uuid} onChange={(e) => setPayment({ ...payment, customer_uuid: e.target.value })}><option value="">Select customer</option>{due.map((customer) => <option key={customer.uuid} value={customer.uuid}>{customer.name} - {money(customer.balance)}</option>)}</select></label><label>Amount<input required type="number" value={payment.amount} onChange={(e) => setPayment({ ...payment, amount: e.target.value })} /></label><label>Method<input value={payment.method} onChange={(e) => setPayment({ ...payment, method: e.target.value })} /></label><label>Notes<input value={payment.notes} onChange={(e) => setPayment({ ...payment, notes: e.target.value })} /></label></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setReceiving(false)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}</div>;
+  return <div className="stack"><section className="panel"><div className="module-head"><h2>Outstanding Balance</h2><button className="primary-btn" onClick={() => setReceiving(true)}><Plus size={16} /> Receive Payment</button></div><DataTable rows={due} columns={['name', 'phone', 'balance']} actions={(row) => <button className="ghost-btn" onClick={() => printLedger(row, displayLedgerRows)}><Printer size={15} /> Statement</button>} /><h2 className="section-title">Credit Records</h2><DataTable rows={displayLedgerRows} columns={['type', 'amount', 'reference', 'due_date', 'entry_at']} actions={(row) => <button className="danger-btn" onClick={() => setDeleting(row)}><Trash2 size={15} /> Delete</button>} />{deleting && <DeleteDialog row={deleting} store="customer_ledgers" onClose={() => setDeleting(null)} onDelete={(mode) => removeLedger(deleting, mode)} />}</section>{receiving && <ModalShell onClose={() => setReceiving(false)}><form onSubmit={submit}><div className="modal-header"><h2>Receive Payment</h2><button type="button" className="icon-btn" onClick={() => setReceiving(false)} title="Close"><X size={17} /></button></div><div className="modal-body"><div className="form-grid"><label>Customer<select required value={payment.customer_uuid} onChange={(e) => setPayment({ ...payment, customer_uuid: e.target.value })}><option value="">Select customer</option>{due.map((customer) => <option key={customer.uuid} value={customer.uuid}>{customer.name} - {money(customer.balance)}</option>)}</select></label><label>Amount<input required type="number" value={payment.amount} onChange={(e) => setPayment({ ...payment, amount: e.target.value })} /></label><label>Method<input value={payment.method} onChange={(e) => setPayment({ ...payment, method: e.target.value })} /></label><label>Notes<input value={payment.notes} onChange={(e) => setPayment({ ...payment, notes: e.target.value })} /></label></div></div><div className="modal-footer"><button type="button" className="ghost-btn" onClick={() => setReceiving(false)}>Cancel</button><button className="primary-btn">Save</button></div></form></ModalShell>}</div>;
 }
 
 function Sales({ rows, brand, refresh }) {
